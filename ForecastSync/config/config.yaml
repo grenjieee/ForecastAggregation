@@ -1,0 +1,62 @@
+# 服务器配置
+server:
+  port: 8081
+  mode: debug
+
+# 数据库配置
+mysql:
+  dsn: "postgres://postgres:postgres@192.168.1.37:5432/forecast_aggregation?sslmode=disable&TimeZone=Asia/Shanghai"
+  max_open_conns: 20
+  max_idle_conns: 10
+  conn_max_lifetime: 3600s
+
+# 同步配置（支持多平台独立调度）
+sync:
+  cron: "0 */1 * * *"  # 全局同步周期
+  enabled_platforms: ["polymarket", "kalshi", "augur3"]  # 启用的平台
+
+# 各平台独立配置
+platforms:
+  # Polymarket配置
+  polymarket:
+    base_url: "https://gamma-api.polymarket.com"
+    protocol: "rest"
+    timeout: 10
+    retry_count: 2
+    auth_token: ""
+    #代理地址
+    proxy: "http://127.0.0.1:7890"
+    # 最小下注金额
+    min_bet: 1
+    # 最大下注金额
+    max_bet: 1
+
+  kalshi:
+    base_url: "https://trading-api.kalshi.com/trade-api/v2" # Kalshi官方基础URL
+    sport_path: "/markets" # 市场数据接口路径
+    protocol: "rest"
+    timeout: 10 # 超时时间（匹配Kalshi建议）
+    retry_count: 3 # 重试次数
+    auth_key: "YOUR_KALSHI_API_KEY" # 替换为你的Kalshi API Key
+    auth_secret: "YOUR_KALSHI_API_SECRET" # 替换为你的Kalshi API Secret
+    #代理地址
+    proxy: "127.0.0.1:7890"
+    # 最小下注金额
+    min_bet: 1
+    # 最大下注金额
+    max_bet: 1
+
+  # Augur3配置（示例，需替换真实值）
+  augur3:
+    base_url: "https://api.augur3.com"
+    protocol: "rest"
+    timeout: 30
+    retry_count: 3
+    sport_path: "/api/v1/events/sport"
+    auth_token: "your_augur3_token"
+    #代理地址
+    proxy: ""
+    # 最小下注金额
+    min_bet: 1.0
+    # 最大下注金额
+    max_bet: 10.0
