@@ -6,12 +6,10 @@ replace ForecastSync => ./
 
 require (
 	github.com/gin-gonic/gin v1.11.0
-	github.com/go-resty/resty/v2 v2.17.1
 	github.com/google/uuid v1.6.0
 	github.com/sirupsen/logrus v1.9.4
 	github.com/spf13/viper v1.21.0
 	gorm.io/datatypes v1.0.7
-	gorm.io/driver/mysql v1.6.0
 	gorm.io/driver/postgres v1.3.4
 	gorm.io/gorm v1.31.1
 )
@@ -70,5 +68,6 @@ require (
 	golang.org/x/tools v0.35.0 // indirect
 	google.golang.org/protobuf v1.36.9 // indirect
 	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
+	gorm.io/driver/mysql v1.6.0 // indirect
 	gorm.io/driver/sqlserver v1.6.3 // indirect
 )
