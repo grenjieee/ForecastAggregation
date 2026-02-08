@@ -129,23 +129,23 @@ INSERT INTO `platforms` (`id`, `name`, `type`, `api_url`, `contract_address`, `r
 -- 3. 预测事件主表（events）
 -- ------------------------------
 CREATE TABLE events (
-                        id BIGSERIAL PRIMARY KEY,
-                        event_uuid VARCHAR(64) NOT NULL UNIQUE,
-                        title VARCHAR(256) NOT NULL,
-                        type VARCHAR(16) NOT NULL,
-                        platform_id BIGINT NOT NULL REFERENCES platforms(id),
-                        platform_event_id VARCHAR(64) NOT NULL,
-                        start_time TIMESTAMP NOT NULL,
-                        end_time TIMESTAMP NOT NULL,
-                        resolve_time TIMESTAMP,
-                        options JSONB NOT NULL,
-                        result VARCHAR(32),
-                        result_source VARCHAR(64),
-                        result_verified BOOLEAN DEFAULT FALSE,
-                        status VARCHAR(16) DEFAULT 'active',
-                        is_hot BOOLEAN DEFAULT FALSE,
-                        created_at TIMESTAMP DEFAULT NOW(),
-                        updated_at TIMESTAMP DEFAULT NOW()
+    id BIGSERIAL PRIMARY KEY,
+    event_uuid VARCHAR(128) NOT NULL UNIQUE,
+    title VARCHAR(256) NOT NULL,
+    type VARCHAR(16) NOT NULL,
+    platform_id BIGINT NOT NULL REFERENCES platforms(id),
+    platform_event_id VARCHAR(128) NOT NULL,
+    start_time TIMESTAMP NOT NULL,
+    end_time TIMESTAMP NOT NULL,
+    resolve_time TIMESTAMP,
+    options JSONB NOT NULL,
+    result VARCHAR(32),
+    result_source VARCHAR(256),
+    result_verified BOOLEAN DEFAULT FALSE,
+    status VARCHAR(16) DEFAULT 'active',
+    is_hot BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
 );
 -- 表备注
 COMMENT ON TABLE events IS '预测事件主表，存储所有对接平台的预测事件信息';
@@ -188,20 +188,24 @@ COMMENT ON INDEX idx_events_title_gin IS '事件标题全文索引，支持模�
 -- ------------------------------
 -- 4. 事件赔率表（event_odds）- 修正唯一约束命名
 -- ------------------------------
-CREATE TABLE event_odds (
-                            id BIGSERIAL PRIMARY KEY,
-                            event_id BIGINT NOT NULL REFERENCES events(id),
-                            platform_id BIGINT NOT NULL REFERENCES platforms(id),
-                            odds JSONB NOT NULL,
-                            fee NUMERIC(8,4) DEFAULT 0,
-                            max_bet NUMERIC(18,6),
-                            min_bet NUMERIC(18,6) DEFAULT 0.1,
-                            locked_odds JSONB,
-                            cache_level VARCHAR(8) DEFAULT 'db',
-                            updated_at TIMESTAMP DEFAULT NOW(),
-    -- 显式命名唯一约束，解决备注报错问题
-                            CONSTRAINT uk_event_platform UNIQUE (event_id, platform_id)
-);
+-- 1. 先创建event_odds表（去掉内联的INDEX语句）
+CREATE TABLE IF NOT EXISTS event_odds (
+    id bigserial PRIMARY KEY,
+    event_id bigint NOT NULL,
+    unique_event_platform varchar(128) NOT NULL UNIQUE,
+    platform_id bigint NOT NULL,
+    option_name varchar(64) NOT NULL,
+    price decimal(10,2) NOT NULL,
+    liquidity decimal(10,2) DEFAULT 0,
+    volume decimal(10,2) DEFAULT 0,
+    created_at timestamp DEFAULT now(),
+    updated_at timestamp DEFAULT now(),
+    deleted_at timestamp,
+    FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE ON UPDATE CASCADE
+    );
+
+-- 2. 单独创建event_id的普通索引（这是PostgreSQL的正确方式）
+CREATE INDEX IF NOT EXISTS idx_event_odds_event_id ON event_odds (event_id);
 -- 表备注
 COMMENT ON TABLE event_odds IS '事件赔率表，存储各平台各事件的实时赔率数据';
 -- 字段备注
@@ -231,25 +235,25 @@ COMMENT ON INDEX idx_event_odds_odds_gin IS '赔率JSONB索引，支持按赔率
 -- 5. 用户订单表（orders）
 -- ------------------------------
 CREATE TABLE orders (
-                        id BIGSERIAL PRIMARY KEY,
-                        order_uuid VARCHAR(64) NOT NULL UNIQUE,
-                        user_wallet VARCHAR(64) NOT NULL REFERENCES users(wallet_address),
-                        event_id BIGINT NOT NULL REFERENCES events(id),
-                        platform_id BIGINT NOT NULL REFERENCES platforms(id),
-                        platform_order_id VARCHAR(64),
-                        bet_option VARCHAR(32) NOT NULL,
-                        bet_amount NUMERIC(18,6) NOT NULL,
-                        locked_odds NUMERIC(10,2) NOT NULL,
-                        expected_profit NUMERIC(18,6) DEFAULT 0,
-                        actual_profit NUMERIC(18,6) DEFAULT 0,
-                        platform_fee NUMERIC(18,6) DEFAULT 0,
-                        manage_fee NUMERIC(18,6) DEFAULT 0,
-                        gas_fee NUMERIC(18,6) DEFAULT 0,
-                        fund_lock_tx_hash VARCHAR(66),
-                        settlement_tx_hash VARCHAR(66),
-                        status VARCHAR(16) DEFAULT 'pending_lock',
-                        created_at TIMESTAMP DEFAULT NOW(),
-                        updated_at TIMESTAMP DEFAULT NOW()
+    id BIGSERIAL PRIMARY KEY,
+    order_uuid VARCHAR(64) NOT NULL UNIQUE,
+    user_wallet VARCHAR(64) NOT NULL REFERENCES users(wallet_address),
+    event_id BIGINT NOT NULL REFERENCES events(id),
+    platform_id BIGINT NOT NULL REFERENCES platforms(id),
+    platform_order_id VARCHAR(64),
+    bet_option VARCHAR(32) NOT NULL,
+    bet_amount NUMERIC(18,6) NOT NULL,
+    locked_odds NUMERIC(10,2) NOT NULL,
+    expected_profit NUMERIC(18,6) DEFAULT 0,
+    actual_profit NUMERIC(18,6) DEFAULT 0,
+    platform_fee NUMERIC(18,6) DEFAULT 0,
+    manage_fee NUMERIC(18,6) DEFAULT 0,
+    gas_fee NUMERIC(18,6) DEFAULT 0,
+    fund_lock_tx_hash VARCHAR(66),
+    settlement_tx_hash VARCHAR(66),
+    status VARCHAR(16) DEFAULT 'pending_lock',
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
 );
 -- 表备注
 COMMENT ON TABLE orders IS '用户订单表，存储用户所有下注订单信息';
@@ -289,16 +293,16 @@ COMMENT ON INDEX idx_orders_created_at IS '创建时间索引，按时间筛选�
 -- 6. 链上事件记录表（contract_events）
 -- ------------------------------
 CREATE TABLE contract_events (
-                                 id BIGSERIAL PRIMARY KEY,
-                                 event_type VARCHAR(32) NOT NULL,
-                                 order_uuid VARCHAR(64) NOT NULL REFERENCES orders(order_uuid),
-                                 user_wallet VARCHAR(64) NOT NULL,
-                                 tx_hash VARCHAR(66) NOT NULL UNIQUE,
-                                 block_number BIGINT,
-                                 event_data JSONB NOT NULL,
-                                 processed BOOLEAN DEFAULT FALSE,
-                                 processed_at TIMESTAMP,
-                                 created_at TIMESTAMP DEFAULT NOW()
+     id BIGSERIAL PRIMARY KEY,
+     event_type VARCHAR(32) NOT NULL,
+     order_uuid VARCHAR(64) NOT NULL REFERENCES orders(order_uuid),
+     user_wallet VARCHAR(64) NOT NULL,
+     tx_hash VARCHAR(66) NOT NULL UNIQUE,
+     block_number BIGINT,
+     event_data JSONB NOT NULL,
+     processed BOOLEAN DEFAULT FALSE,
+     processed_at TIMESTAMP,
+     created_at TIMESTAMP DEFAULT NOW()
 );
 -- 表备注
 COMMENT ON TABLE contract_events IS '链上事件记录表，留存智能合约关键操作痕迹，用于后端监听和追溯';
@@ -331,15 +335,15 @@ COMMENT ON INDEX idx_contract_events_event_data_gin IS '事件数据JSONB索引�
 -- 7. 结算记录表（settlement_records）
 -- ------------------------------
 CREATE TABLE settlement_records (
-                                    id BIGSERIAL PRIMARY KEY,
-                                    order_uuid VARCHAR(64) NOT NULL REFERENCES orders(order_uuid),
-                                    user_wallet VARCHAR(64) NOT NULL,
-                                    settlement_amount NUMERIC(18,6) NOT NULL,
-                                    manage_fee NUMERIC(18,6) DEFAULT 0,
-                                    gas_fee NUMERIC(18,6) DEFAULT 0,
-                                    tx_hash VARCHAR(66) NOT NULL UNIQUE,
-                                    settlement_time TIMESTAMP DEFAULT NOW(),
-                                    created_at TIMESTAMP DEFAULT NOW()
+    id BIGSERIAL PRIMARY KEY,
+    order_uuid VARCHAR(64) NOT NULL REFERENCES orders(order_uuid),
+    user_wallet VARCHAR(64) NOT NULL,
+    settlement_amount NUMERIC(18,6) NOT NULL,
+    manage_fee NUMERIC(18,6) DEFAULT 0,
+    gas_fee NUMERIC(18,6) DEFAULT 0,
+    tx_hash VARCHAR(66) NOT NULL UNIQUE,
+    settlement_time TIMESTAMP DEFAULT NOW(),
+    created_at TIMESTAMP DEFAULT NOW()
 );
 -- 表备注
 COMMENT ON TABLE settlement_records IS '用户结算记录表，留存详细的结算金额和手续费信息，用于审计';

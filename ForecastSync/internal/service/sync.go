@@ -4,6 +4,7 @@ import (
 	"ForecastSync/internal/config"
 	"context"
 	"fmt"
+	"time"
 
 	"ForecastSync/internal/adapter/kalshi"
 	"ForecastSync/internal/adapter/polymarket"
@@ -75,12 +76,40 @@ func (s *SyncService) SyncPlatform(ctx context.Context, platformName string, eve
 	if err != nil {
 		return fmt.Errorf("%s转换数据失败: %w", platformName, err)
 	}
-
+	uniqueOdds := s.dedupEventOdds(odds)
 	// 6. 通用入库
-	if err := s.repo.SaveEvents(ctx, events, odds); err != nil {
+	if err := s.repo.SaveEvents(ctx, events, uniqueOdds); err != nil {
 		return fmt.Errorf("%s入库失败: %w", platformName, err)
 	}
 
 	s.logger.Infof("%s同步完成，共%d个事件", platformName, len(events))
 	return nil
+}
+
+func (s *SyncService) dedupEventOdds(odds []*model.EventOdds) []*model.EventOdds {
+	if len(odds) == 0 {
+		return []*model.EventOdds{}
+	}
+
+	// 用map去重，key=unique_event_platform，value=最新的Odds
+	oddsMap := make(map[string]*model.EventOdds)
+	for _, odd := range odds {
+		// 空值兜底（防止unique_event_platform为空导致panic）
+		if odd.UniqueEventPlatform == "" {
+			odd.UniqueEventPlatform = fmt.Sprintf("%d_%d_%s_%d", odd.EventID, odd.PlatformID, odd.OptionName, time.Now().UnixNano())
+		}
+
+		// 保留更新时间最新的一条
+		if existing, ok := oddsMap[odd.UniqueEventPlatform]; !ok || odd.UpdatedAt.After(existing.UpdatedAt) {
+			oddsMap[odd.UniqueEventPlatform] = odd
+		}
+	}
+
+	// 转换map为切片
+	uniqueOdds := make([]*model.EventOdds, 0, len(oddsMap))
+	for _, odd := range oddsMap {
+		uniqueOdds = append(uniqueOdds, odd)
+	}
+
+	return uniqueOdds
 }

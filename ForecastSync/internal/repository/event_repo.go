@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type EventRepository struct {
@@ -20,60 +21,71 @@ func NewEventRepository(db *gorm.DB) interfaces.PlatformRepository {
 	return &EventRepository{db: db}
 }
 
-// SaveEvents 通用入库逻辑（所有平台共用）
+// SaveEvents 纯数据库操作：仅负责事务+批量创建+UPSERT（无业务逻辑）
 func (r *EventRepository) SaveEvents(ctx context.Context, events []*model.Event, odds []*model.EventOdds) error {
 	// 开启事务
 	tx := r.db.WithContext(ctx).Begin()
 	if tx.Error != nil {
 		return fmt.Errorf("开启事务失败: %w", tx.Error)
 	}
+
+	// 事务兜底
 	defer func() {
 		if p := recover(); p != nil {
-			tx.Rollback()
+			_ = tx.Rollback()
+			panic(p)
 		}
 	}()
 
-	// 1. 保存Event
-	for i := range events {
-		if events[i].EventUUID == "" {
-			events[i].EventUUID = uuid.NewString() // 生成全局唯一ID
-		}
-		if err := tx.Create(events[i]).Error; err != nil {
-			tx.Rollback()
-			return fmt.Errorf("保存Event失败: %w, title: %s", err, events[i].Title)
-		}
-		// 关联EventID到Odds
-		for j := range odds {
-			if odds[j].EventID == 0 {
-				odds[j].EventID = events[i].ID
-			}
+	// 1. 批量创建Event（仅补全UUID，无其他逻辑）
+	for _, event := range events {
+		if event.EventUUID == "" {
+			event.EventUUID = uuid.NewString()
 		}
 	}
+	if err := tx.CreateInBatches(events, 100).Error; err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("批量保存Event失败: %w", err)
+	}
 
-	// 2. 保存EventOdds（处理唯一约束）
-	for i := range odds {
-		if err := tx.Create(odds[i]).Error; err != nil {
-			if strings.Contains(err.Error(), "uk_event_platform") {
-				// 冲突则更新赔率
-				if err := tx.Model(&model.EventOdds{}).
-					Where("event_id = ? AND platform_id = ?", odds[i].EventID, odds[i].PlatformID).
-					Updates(map[string]interface{}{
-						"odds":       odds[i].Odds,
-						"updated_at": odds[i].UpdatedAt,
-					}).Error; err != nil {
-					tx.Rollback()
-					return fmt.Errorf("更新Odds失败: %w, event_id: %d", err, odds[i].EventID)
+	// 2. 关联EventID到Odds（仅基础关联，无复杂逻辑）
+	eventIDMap := make(map[string]uint64)
+	for _, event := range events {
+		eventIDMap[event.PlatformEventID] = event.ID
+	}
+	for _, odd := range odds {
+		if odd.EventID == 0 {
+			for platformEventID, eventID := range eventIDMap {
+				if strings.Contains(odd.UniqueEventPlatform, platformEventID) {
+					odd.EventID = eventID
+					break
 				}
-			} else {
-				tx.Rollback()
-				return fmt.Errorf("保存Odds失败: %w, event_id: %d", err, odds[i].EventID)
 			}
 		}
 	}
 
-	// 提交事务
+	// 3. 纯UPSERT操作（无去重，上层已处理）
+	if len(odds) > 0 {
+		err := tx.Clauses(clause.OnConflict{
+			Columns: []clause.Column{{Name: "unique_event_platform"}},
+			DoUpdates: clause.Assignments(map[string]interface{}{
+				"price":       gorm.Expr("EXCLUDED.price"),
+				"option_name": gorm.Expr("EXCLUDED.option_name"),
+				"updated_at":  gorm.Expr("EXCLUDED.updated_at"),
+				// 仅保留数据库存在的字段，按需添加
+			}),
+		}).CreateInBatches(odds, 100).Error
+
+		if err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("批量UPSERT EventOdds失败: %w", err)
+		}
+	}
+
+	// 4. 提交事务
 	if err := tx.Commit().Error; err != nil {
 		return fmt.Errorf("提交事务失败: %w", err)
 	}
+
 	return nil
 }
