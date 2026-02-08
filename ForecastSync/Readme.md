@@ -1,5 +1,3 @@
-
-
 ## 代码结构 
 ```text
 ForecastSync/
@@ -32,7 +30,6 @@ ForecastSync/
 ├── go.mod
 └── go.sum
 ```
-
 
 ## 库表结构
 ```sql
@@ -125,6 +122,9 @@ CREATE INDEX idx_platforms_is_hot ON platforms(is_hot);
 COMMENT ON INDEX idx_platforms_is_hot IS '热门平台索引，优先缓存热门平台数据';
 CREATE INDEX idx_platforms_is_enabled ON platforms(is_enabled);
 COMMENT ON INDEX idx_platforms_is_enabled IS '启用状态索引，过滤禁用平台';
+-- 初始化平台数据 ---
+INSERT INTO `platforms` (`id`, `name`, `type`, `api_url`, `contract_address`, `rpc_url`, `api_key`, `api_limit`, `current_api_usage`, `is_hot`, `is_enabled`, `created_at`, `updated_at`) VALUES('1','polymarket','centralized','https://gamma-api.polymarket.com',NULL,NULL,NULL,'600','0','0','1','2026-02-08 18:05:07','2026-02-08 18:05:10');
+INSERT INTO `platforms` (`id`, `name`, `type`, `api_url`, `contract_address`, `rpc_url`, `api_key`, `api_limit`, `current_api_usage`, `is_hot`, `is_enabled`, `created_at`, `updated_at`) VALUES('2','kalshi','centralized','https://api.kalshi.com/v1',NULL,NULL,NULL,'600','0','0','1','2026-02-08 18:06:34','2026-02-08 18:06:39');
 
 -- ------------------------------
 -- 3. 预测事件主表（events）
@@ -402,3 +402,65 @@ CREATE TRIGGER update_orders_updated_at
 COMMENT ON TRIGGER update_orders_updated_at ON orders IS '订单表更新时自动刷新updated_at';
 ```
 
+## 前置准备
+- 1.Postgres数据库
+- 2.在Postgres中建立数据库forecast_aggregation 并执行库表结构中的SQL
+
+## 快速启动
+
+- 1.修改配置文件 config/config.yaml 以下配置
+```toml
+# 数据库配置
+mysql:
+  #使用的是postgres,请修改成自己环境下postgres的配置
+  dsn: "postgres://postgres:postgres@192.168.1.37:5432/forecast_aggregation?sslmode=disable&TimeZone=Asia/Shanghai"
+
+# 各平台独立配置
+platforms:
+  # Polymarket配置
+  polymarket:
+    base_url: "https://gamma-api.polymarket.com"
+    protocol: "rest"
+    timeout: 10
+    retry_count: 2
+    auth_token: ""
+    #代理地址 注意：因为polymarket是国外的，需要开代理才能访问，工程请求默认不会被服务器开启的梯子代理，因此需要指定代理地址
+    #如果本地可以直接访问外网，这这个proxy:直接置空即可
+    proxy: "http://127.0.0.1:7890"
+    # 最小下注金额
+    min_bet: 1
+    # 最大下注金额
+    max_bet: 1
+
+  kalshi:
+    base_url: "https://trading-api.kalshi.com/trade-api/v2" # Kalshi官方基础URL
+    sport_path: "/markets" # 市场数据接口路径
+    protocol: "rest"
+    timeout: 10 # 超时时间（匹配Kalshi建议）
+    retry_count: 3 # 重试次数
+    auth_key: "YOUR_KALSHI_API_KEY" # 替换为你的Kalshi API Key
+    auth_secret: "YOUR_KALSHI_API_SECRET" # 替换为你的Kalshi API Secret
+    #代理地址 根据实际情况配置
+    proxy: "127.0.0.1:7890"
+    # 最小下注金额
+    min_bet: 1
+    # 最大下注金额
+    max_bet: 1
+```
+- 2.执行启动命令
+```shell
+go run cmd/main.go
+```
+出现以下日志说明启动成功
+```text
+time="2026-02-08T18:19:29+08:00" level=info msg="配置文件加载成功"
+time="2026-02-08T18:19:29+08:00" level=info msg="PostgreSQL连接成功"
+time="2026-02-08T18:19:29+08:00" level=info msg="Gin运行模式: debug"
+time="2026-02-08T18:19:29+08:00" level=info msg="服务启动成功，端口：8081"
+```
+
+- 3.执行以下命令触发同步指定预测平台的数据
+```shell
+curl --location --request POST 'localhost:8081/sync/platform/polymarket' \
+--data ''
+```
