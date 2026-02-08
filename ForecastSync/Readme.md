@@ -408,7 +408,7 @@ COMMENT ON TRIGGER update_orders_updated_at ON orders IS '订单表更新时自�
 ## 快速启动
 
 - 1.修改配置文件 config/config.yaml 以下配置
-```toml
+```yaml
 # 数据库配置
 mysql:
   #使用的是postgres,请修改成自己环境下postgres的配置
