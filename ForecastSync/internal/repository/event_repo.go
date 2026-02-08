@@ -7,6 +7,7 @@ import (
 
 	"ForecastSync/internal/interfaces"
 	"ForecastSync/internal/model"
+
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 )

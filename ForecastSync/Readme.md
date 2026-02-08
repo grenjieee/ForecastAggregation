@@ -7,26 +7,25 @@ ForecastSync/
 ├── internal/
 │   ├── adapter/             # 平台适配器层（每个平台一个目录）
 │   │   ├── polymarket/      # Polymarket适配器
-│   │   │   ├── adapter.go   # 实现通用接口
-│   │   │   ├── client.go    # HTTP客户端
-│   │   │   └── model.go     # Polymarket原生模型
+│   │   │   ├── adapter.go   # Polymarket适配器实现
 │   │   └── kalshi/          # Kalshi适配器
-│   │       ├── adapter.go   # 实现通用接口
-│   │       ├── client.go    # HTTP客户端
-│   │       └── model.go     # Kalshi原生模型
+│   │       ├── adapter.go   # Kalshi适配器实现
 │   ├── config/              # 配置管理
 │   │   └── config.go        # 全局配置
 │   ├── interfaces/          # 通用接口定义
-│   │   └── platform.go      # 平台适配器通用接口
+│   │   └── platform_adapter.go  # 平台适配器通用接口
 │   ├── model/               # 数据库模型 + 通用数据结构
 │   │   ├── db.go            # 数据库表模型（Event/EventOdds等）
 │   │   └── platform.go      # 通用平台数据结构
 │   ├── repository/          # 通用数据库操作
-│   │   └── event.go         # Event/EventOdds入库逻辑
+│   │   └── event_repo.go    # Event/EventOdds入库逻辑
 │   ├── service/             # 通用同步服务
 │   │   └── sync.go          # 多平台同步核心逻辑
 │   └── api/                 # API接口层
 │       └── sync_handler.go  # 同步接口
+│   └── utils/               # API接口层
+│       └── httpclient       # 统一封装http请求工具类
+│   │       ├── adapter.go   # http工具类实现
 ├── go.mod
 └── go.sum
 ```
