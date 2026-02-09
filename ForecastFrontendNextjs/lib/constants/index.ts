@@ -1,0 +1,32 @@
+import * as main from "./constant-main";
+import * as test from "./constant-test";
+// import * as localmain from "./constant-localmain";
+const mConstants: any = main;
+// let mConstants = process.env.NODE_ENV !== "development" ? main : test;
+
+export const apiUrl = mConstants.apiUrl;
+
+export const baseScanUrl = mConstants.baseScanUrl;
+export const network = mConstants.network;
+export const tonApiUrl = mConstants.tonApiUrl;
+export const marketInterval = mConstants.marketInterval;
+export const addresses = mConstants.addresses;
+export const ROUTER_ADDRESS = mConstants.ROUTER_ADDRESS;
+export const transferAddress = mConstants.transferAddress;
+export const graphUrl = mConstants.graphUrl;
+export const graphKey = mConstants.graphKey;
+export const networkName = mConstants.networkName;
+export const chainIdList = mConstants.chainIdList;
+export const cdnUrl = mConstants.cdnUrl;
+export const geckoterminalPool = mConstants.geckoterminalPool;
+export const toChainUrl = mConstants.toChainUrl;
+export const mainCoinName = mConstants.mainCoinName;
+export const okLinkName = mConstants.okLinkName;
+export const initialCoinAmount = mConstants.initialCoinAmount;
+export const toUniswapAmount = mConstants.toUniswapAmount;
+export const toTopSpotAmount = mConstants.toTopSpotAmount;
+export const toUniswapMarketCap = mConstants.toUniswapMarketCap;
+export const stableCoinName = mConstants.stableCoinName;
+export const stableCoinAddress = mConstants.stableCoinAddress;
+export const stableCoinDecimals = mConstants.stableCoinDecimals;
+export const wssPath = mConstants.wssPath;
