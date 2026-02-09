@@ -40,7 +40,7 @@ func (k *Adapter) GetName() string {
 func (k *Adapter) FetchEvents(ctx context.Context, eventType string) ([]*model.PlatformRawEvent, error) {
 	_ = ctx
 	// 1. 调用Kalshi API获取事件
-	eventsURL := fmt.Sprintf("%s/markets?type=%s", k.cfg.BaseURL, eventType)
+	eventsURL := fmt.Sprintf("%s/%s", k.cfg.BaseURL, eventType)
 	resp, err := k.httpClient.Get(eventsURL)
 	if err != nil {
 		return nil, fmt.Errorf("获取Kalshi事件失败: %w", err)
