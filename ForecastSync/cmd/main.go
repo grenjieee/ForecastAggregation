@@ -6,7 +6,6 @@ import (
 
 	"ForecastSync/internal/api"
 	"ForecastSync/internal/config"
-	_ "ForecastSync/internal/importer" //引入这个保证各个平台方的init能被触发
 
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
@@ -60,6 +59,11 @@ func main() {
 	// 7. 注册API路由（传入全局配置）
 	syncHandler := api.NewSyncHandler(db, logrusLogger, cfg)
 	r.POST("/sync/platform/:platform", syncHandler.SyncPlatformHandler)
+
+	// 市场查询接口（给前端页面用）
+	marketHandler := api.NewMarketHandler(db, logrusLogger)
+	r.GET("/api/markets", marketHandler.ListMarkets)
+	r.GET("/api/markets/:event_uuid", marketHandler.GetMarketDetail)
 
 	// 8. 启动服务（从配置读取端口）
 	port := cfg.Server.Port
