@@ -2,10 +2,23 @@ require("@nomicfoundation/hardhat-toolbox");
 require("dotenv").config();
 require("hardhat-deploy");
 require("@openzeppelin/hardhat-upgrades");
+require("@nomicfoundation/hardhat-foundry");
 
 /** @type import('hardhat/config').HardhatUserConfig */
 module.exports = {
-  solidity: "0.8.28",
+  solidity: {
+    version: "^0.8.0",
+    settings: {
+      optimizer: {
+        enabled: true,
+        runs: 200,
+      },
+    },
+  },
+  paths: {
+    sources: "./contracts",
+    artifacts: "./out", // 指向 Foundry 输出目录
+  },
   namedAccounts: {
     deployer: 0,
     user1: 1,
