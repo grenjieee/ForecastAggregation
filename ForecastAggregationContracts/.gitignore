@@ -1,5 +1,10 @@
 node_modules
 .env
+package-lock.json
+
+# remixd build files
+/contracts/artifacts
+/contracts/.deps
 
 # Hardhat files
 /cache
