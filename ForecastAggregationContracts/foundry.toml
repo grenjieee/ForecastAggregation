@@ -1,0 +1,33 @@
+[profile.default]
+# 定义 Solidity 源代码目录
+src = 'contracts'
+# 定义 编译输出目录
+out = 'out'
+# 定义 依赖库的目录
+libs = ['node_modules', 'lib']
+# 定义 测试文件目录
+test = 'test'
+# 定义 编译缓存文件目录
+cache_path  = 'cache_forge'
+# 指定 Solidity 编译器版本,forge build 将使用此版本编译
+# solc_version = "0.8.28"
+# 自动检测并使用项目中安装的 Solidity 版本
+auto_detect_solc = true
+# 启用优化器并设置优化运行次数,优化器让字节码更高效(更省 gas),代价是编译时间稍长
+optimizer = true
+# ========================================
+# 设置 优化运行次数
+# 意思是:优化器会假设合约中的函数平均会被调用多少次,以此来权衡:
+# 较低数值(例如 50):部署代码更小(部署更省 gas)
+# 较高数值(例如 10000):运行时更省 gas(但部署更贵)
+# ========================================
+optimizer_runs = 200
+# 自动递归检测 remappings,类似于 hardhat 的 node_modules 解析
+auto_detect_remappings = true
+
+# 类似于执行 forge test --gas-report 时的效果
+
+# 指定哪些合约生成 gas 报告
+gas_reports = ['*']
+# 排除不需要报告的合约
+gas_reports_ignore = []
