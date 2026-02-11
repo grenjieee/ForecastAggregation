@@ -20,6 +20,7 @@ ForecastAggregationContract/
 │   └── TopicRegistryUpgradeable.sol    # 预测事件注册的合约
 ├── test/                               # 测试脚本目录
 ├── .gitignore                          # git忽略文件
+├── foundry.toml                        # foundry配置文件
 ├── hardhat.config.js                   # hardhat配置文件
 ├── package.json                        # 项目依赖包
 └── README.md                           # 项目说明
