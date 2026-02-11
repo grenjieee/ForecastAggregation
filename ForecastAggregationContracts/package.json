@@ -2,6 +2,7 @@
   "name": "hardhat-project",
   "devDependencies": {
     "@chainlink/contracts": "^1.5.0",
+    "@nomicfoundation/hardhat-foundry": "^1.2.0",
     "@nomicfoundation/hardhat-toolbox": "^5.0.0",
     "@openzeppelin/contracts": "^5.4.0",
     "@openzeppelin/contracts-upgradeable": "^4.9.6",
