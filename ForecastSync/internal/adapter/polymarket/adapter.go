@@ -40,6 +40,8 @@ func (p *Adapter) GetName() string {
 
 // FetchEventResult 拉取已结束事件结果（stub：可后续接 Gamma API 的 event result）
 func (p *Adapter) FetchEventResult(ctx context.Context, platformEventID string) (result, status string, err error) {
+	_ = ctx
+	_ = platformEventID
 	return "", "", nil
 }
 

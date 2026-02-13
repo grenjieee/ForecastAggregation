@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"net/url"
@@ -41,9 +42,14 @@ func ensureDatabaseExists(dsn string) error {
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer func(db *sql.DB) {
+		err := db.Close()
+		if err != nil {
+
+		}
+	}(db)
 	err = db.QueryRow("SELECT 1 FROM pg_database WHERE datname = $1", dbname).Scan(new(int))
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		_, err = db.Exec("CREATE DATABASE " + `"` + strings.ReplaceAll(dbname, `"`, `""`) + `"`)
 		return err
 	}

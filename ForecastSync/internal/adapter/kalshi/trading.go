@@ -20,6 +20,7 @@ func NewTradingAdapter() *TradingAdapter {
 
 // PlaceOrder 向 Kalshi 下单，当前返回 stub 订单号
 func (t *TradingAdapter) PlaceOrder(ctx context.Context, req *interfaces.PlaceOrderRequest) (platformOrderID string, err error) {
+	_ = ctx
 	if req == nil {
 		return "", fmt.Errorf("PlaceOrderRequest is nil")
 	}
