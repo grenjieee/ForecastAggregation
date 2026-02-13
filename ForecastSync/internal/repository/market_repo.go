@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"time"
 
 	"ForecastSync/internal/model"
 
@@ -19,6 +20,10 @@ type MarketFilter struct {
 type MarketRepository interface {
 	// ListEvents 按过滤条件分页查询事件
 	ListEvents(ctx context.Context, filter MarketFilter, page, pageSize int) ([]*model.Event, int64, error)
+	// ListEventsForAggregation 按类型拉取事件（供聚合任务用，带 limit）
+	ListEventsForAggregation(ctx context.Context, eventType string, limit int) ([]*model.Event, error)
+	// ListEventsEndedButActive 已过结束时间仍为 active 的事件（供结果同步）
+	ListEventsEndedButActive(ctx context.Context, limit int) ([]*model.Event, error)
 	// GetEventByUUID 通过 event_uuid 获取事件
 	GetEventByUUID(ctx context.Context, eventUUID string) (*model.Event, error)
 	// GetOddsByEventIDs 批量查询事件对应的赔率
@@ -27,6 +32,8 @@ type MarketRepository interface {
 	GetOddsByEventID(ctx context.Context, eventID uint64) ([]*model.EventOdds, error)
 	// GetPlatforms 获取所有平台基础信息
 	GetPlatforms(ctx context.Context) ([]*model.Platform, error)
+	// GetEventByID 通过 event id 获取事件
+	GetEventByID(ctx context.Context, eventID uint64) (*model.Event, error)
 }
 
 type marketRepository struct {
@@ -88,6 +95,36 @@ func (r *marketRepository) ListEvents(ctx context.Context, filter MarketFilter, 
 	return events, total, nil
 }
 
+// ListEventsForAggregation 按类型拉取事件，用于聚合任务
+func (r *marketRepository) ListEventsForAggregation(ctx context.Context, eventType string, limit int) ([]*model.Event, error) {
+	if limit <= 0 {
+		limit = 2000
+	}
+	var events []*model.Event
+	db := r.db.WithContext(ctx).Model(&model.Event{})
+	if eventType != "" {
+		db = db.Where("type = ?", eventType)
+	}
+	if err := db.Order("start_time ASC").Limit(limit).Find(&events).Error; err != nil {
+		return nil, err
+	}
+	return events, nil
+}
+
+// ListEventsEndedButActive 已过 end_time 且 status=active 的事件
+func (r *marketRepository) ListEventsEndedButActive(ctx context.Context, limit int) ([]*model.Event, error) {
+	if limit <= 0 {
+		limit = 500
+	}
+	var events []*model.Event
+	if err := r.db.WithContext(ctx).Model(&model.Event{}).
+		Where("status = ? AND end_time < ?", "active", time.Now()).
+		Limit(limit).Find(&events).Error; err != nil {
+		return nil, err
+	}
+	return events, nil
+}
+
 // GetEventByUUID 通过 event_uuid 获取事件
 func (r *marketRepository) GetEventByUUID(ctx context.Context, eventUUID string) (*model.Event, error) {
 	var event model.Event
@@ -132,4 +169,13 @@ func (r *marketRepository) GetPlatforms(ctx context.Context) ([]*model.Platform,
 		return nil, err
 	}
 	return platforms, nil
+}
+
+// GetEventByID 通过 event id 获取事件
+func (r *marketRepository) GetEventByID(ctx context.Context, eventID uint64) (*model.Event, error) {
+	var e model.Event
+	if err := r.db.WithContext(ctx).Where("id = ?", eventID).First(&e).Error; err != nil {
+		return nil, err
+	}
+	return &e, nil
 }

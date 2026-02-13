@@ -21,7 +21,8 @@ type MarketHandler struct {
 // NewMarketHandler 创建 MarketHandler
 func NewMarketHandler(db *gorm.DB, logger *logrus.Logger) *MarketHandler {
 	repo := repository.NewMarketRepository(db)
-	svc := service.NewMarketService(repo, logger)
+	canonicalRepo := repository.NewCanonicalRepository(db)
+	svc := service.NewMarketService(repo, canonicalRepo, logger)
 	return &MarketHandler{
 		marketService: svc,
 		logger:        logger,
@@ -54,16 +55,16 @@ func (h *MarketHandler) ListMarkets(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
-// GetMarketDetail 市场详情 + 平台对比
-// GET /api/markets/:event_uuid
+// GetMarketDetail 市场详情 + 平台对比。:id 为数字时即 canonical_id，否则按 event_uuid 解析所属聚合赛事
+// GET /api/markets/:id
 func (h *MarketHandler) GetMarketDetail(c *gin.Context) {
-	eventUUID := c.Param("event_uuid")
-	if eventUUID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "event_uuid is required"})
+	idOrUUID := c.Param("event_uuid")
+	if idOrUUID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "id or event_uuid is required"})
 		return
 	}
 
-	result, err := h.marketService.GetMarketDetail(c.Request.Context(), eventUUID)
+	result, err := h.marketService.GetMarketDetail(c.Request.Context(), idOrUUID)
 	if err != nil {
 		h.logger.WithError(err).Error("GetMarketDetail failed")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

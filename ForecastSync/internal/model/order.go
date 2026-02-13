@@ -6,11 +6,12 @@ import (
 	"gorm.io/datatypes"
 )
 
-// ContractEvent 对应 contract_events 表，用于记录链上事件原始数据
+// ContractEvent 对应 contract_events 表，用于记录链上事件原始数据。
+// OrderUUID 可空：BetPlaced 先入库，创建订单后再回写 order_uuid 与 processed。
 type ContractEvent struct {
 	ID          uint64         `gorm:"column:id;primaryKey;autoIncrement"`
 	EventType   string         `gorm:"column:event_type;type:varchar(32);not null"`
-	OrderUUID   string         `gorm:"column:order_uuid;type:varchar(64);not null"`
+	OrderUUID   *string        `gorm:"column:order_uuid;type:varchar(64)"` // 可空，先记链上事件再创建订单后回写
 	UserWallet  string         `gorm:"column:user_wallet;type:varchar(64);not null"`
 	TxHash      string         `gorm:"column:tx_hash;type:varchar(66);uniqueIndex;not null"`
 	BlockNumber *int64         `gorm:"column:block_number"`
@@ -46,3 +47,18 @@ type Order struct {
 }
 
 func (Order) TableName() string { return "orders" }
+
+// SettlementRecord 结算记录表
+type SettlementRecord struct {
+	ID               uint64    `gorm:"column:id;primaryKey;autoIncrement"`
+	OrderUUID        string    `gorm:"column:order_uuid;type:varchar(64);not null"`
+	UserWallet       string    `gorm:"column:user_wallet;type:varchar(64);not null"`
+	SettlementAmount float64   `gorm:"column:settlement_amount;type:numeric(18,6);not null"`
+	ManageFee        float64   `gorm:"column:manage_fee;type:numeric(18,6);default:0"`
+	GasFee           float64   `gorm:"column:gas_fee;type:numeric(18,6);default:0"`
+	TxHash           string    `gorm:"column:tx_hash;type:varchar(66);uniqueIndex;not null"`
+	SettlementTime   time.Time `gorm:"column:settlement_time;type:timestamp;default:now()"`
+	CreatedAt        time.Time `gorm:"column:created_at;type:timestamp;default:now()"`
+}
+
+func (SettlementRecord) TableName() string { return "settlement_records" }

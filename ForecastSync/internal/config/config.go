@@ -38,17 +38,18 @@ type SyncConfig struct {
 
 // PlatformConfig 单个平台的独立配置
 type PlatformConfig struct {
-	BaseURL    string  `mapstructure:"base_url"`    // API基础地址
-	Protocol   string  `mapstructure:"protocol"`    // 协议类型：rest/ws
-	Timeout    int     `mapstructure:"timeout"`     // 请求超时（秒）
-	RetryCount int     `mapstructure:"retry_count"` // 重试次数
-	SportPath  string  `mapstructure:"sport_path"`  // 体育事件接口路径
-	AuthToken  string  `mapstructure:"auth_token"`  // 通用认证Token
-	AuthKey    string  `mapstructure:"auth_key"`    // Kalshi专属API Key
-	AuthSecret string  `mapstructure:"auth_secret"` // Kalshi专属API Secret
-	Proxy      string  `mapstructure:"proxy"`       // 代理地址
-	MinBet     float64 `mapstructure:"min_bet"`     // 最小下注金额
-	MaxBet     float64 `mapstructure:"max_bet"`     // 最大下注金额
+	BaseURL      string  `mapstructure:"base_url"`      // API基础地址
+	Protocol     string  `mapstructure:"protocol"`      // 协议类型：rest/ws
+	Timeout      int     `mapstructure:"timeout"`       // 请求超时（秒）
+	RetryCount   int     `mapstructure:"retry_count"`   // 重试次数
+	SportPath    string  `mapstructure:"sport_path"`    // 体育事件接口路径（Polymarket 等用）
+	SeriesTicker string  `mapstructure:"series_ticker"` // Kalshi 体育系列 ticker，仅拉取体育时填（如 NFL、NBA 等）
+	AuthToken    string  `mapstructure:"auth_token"`    // 通用认证Token
+	AuthKey      string  `mapstructure:"auth_key"`      // Kalshi专属API Key
+	AuthSecret   string  `mapstructure:"auth_secret"`   // Kalshi专属API Secret
+	Proxy        string  `mapstructure:"proxy"`         // 代理地址
+	MinBet       float64 `mapstructure:"min_bet"`       // 最小下注金额
+	MaxBet       float64 `mapstructure:"max_bet"`       // 最大下注金额
 }
 
 // LoadConfig 加载配置文件（默认路径：config/config.yaml）

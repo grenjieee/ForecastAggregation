@@ -15,7 +15,6 @@ import (
 	"ForecastSync/internal/interfaces"
 	"ForecastSync/internal/model"
 
-	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 	"gorm.io/datatypes"
 )
@@ -39,45 +38,29 @@ func (p *Adapter) GetName() string {
 	return "Polymarket"
 }
 
+// FetchEventResult 拉取已结束事件结果（stub：可后续接 Gamma API 的 event result）
+func (p *Adapter) FetchEventResult(ctx context.Context, platformEventID string) (result, status string, err error) {
+	return "", "", nil
+}
+
 func (p *Adapter) FetchEvents(ctx context.Context, eventType string) ([]*model.PlatformRawEvent, error) {
+	// 全量拉取并返回（同步层已统一走 FetchEventsWithYield + 独立协程落库，此处仅兼容未走流式的调用方）
+	return p.fetchEventsAccumulated(ctx, eventType)
+}
+
+// fetchEventsAccumulated 全量拉取并返回，会占用较多内存
+func (p *Adapter) fetchEventsAccumulated(ctx context.Context, eventType string) ([]*model.PlatformRawEvent, error) {
 	_ = ctx
-	// 1. 调用Polymarket API获取运动列表
-	sportsURL := fmt.Sprintf("%s/sports", p.cfg.BaseURL)
-	sportsResp, err := p.httpClient.Get(sportsURL)
+	ballSeries, err := p.getBallSeries()
 	if err != nil {
-		return nil, fmt.Errorf("获取运动列表失败: %w", err)
+		return nil, err
 	}
-	// 确保响应体关闭，并处理关闭时的错误
-	defer func() {
-		if err := sportsResp.Body.Close(); err != nil {
-			p.logger.Errorf("关闭sports响应体失败: %v", err) // 修正日志格式化错误
-		}
-	}()
-
-	var sports []struct {
-		Series string `json:"series"`
-		Tags   string `json:"tags"`
-	}
-	if err := json.NewDecoder(sportsResp.Body).Decode(&sports); err != nil {
-		return nil, fmt.Errorf("解析运动列表失败: %w", err)
-	}
-
-	// 2. 构造每个运动类别下的赛事 k:tagId v:series_id
-	var ballSeries = make(map[string]string, len(sports))
-	for _, s := range sports {
-		tagSlice := strings.Split(s.Tags, ",")
-		for _, tag := range tagSlice {
-			ballSeries[tag] = s.Series
-		}
-	}
-
-	// 3. 爬取每个系列的事件
 	var rawEvents []*model.PlatformRawEvent
+	seen := make(map[string]struct{})
 	for tagId, series := range ballSeries {
 		if len(tagId) == 0 || len(series) == 0 {
 			continue
 		}
-		//拼接获取当赛事下的所有赛事预测盘口
 		eventsURL := fmt.Sprintf("%s/events?series_id=%s&tag_id=%s&active=true&closed=false&order=startTime&ascending=true",
 			p.cfg.BaseURL, series, tagId)
 		eventsResp, err := p.httpClient.Get(eventsURL)
@@ -85,10 +68,7 @@ func (p *Adapter) FetchEvents(ctx context.Context, eventType string) ([]*model.P
 			p.logger.Warnf("爬取%s事件失败: %v", series, err)
 			continue
 		}
-
-		// 核心修复：解析响应（兼容数组/单个对象）
 		polyEvents, parseErr := p.parsePolymarketEvents(eventsResp, series)
-		// 无论解析成功与否，都要关闭响应体（关键：避免资源泄漏）
 		if closeErr := eventsResp.Body.Close(); closeErr != nil {
 			p.logger.Errorf("关闭%s事件响应体失败: %v", series, closeErr)
 		}
@@ -96,9 +76,11 @@ func (p *Adapter) FetchEvents(ctx context.Context, eventType string) ([]*model.P
 			p.logger.Warnf("解析%s事件失败: %v", series, parseErr)
 			continue
 		}
-
-		// 4. 封装为通用RawEvent
 		for _, e := range polyEvents {
+			if _, dup := seen[e.ID]; dup {
+				continue
+			}
+			seen[e.ID] = struct{}{}
 			rawEvents = append(rawEvents, &model.PlatformRawEvent{
 				Platform: p.GetName(),
 				ID:       e.ID,
@@ -107,9 +89,88 @@ func (p *Adapter) FetchEvents(ctx context.Context, eventType string) ([]*model.P
 			})
 		}
 	}
-
 	p.logger.Infof("成功获取Polymarket事件共%d条", len(rawEvents))
 	return rawEvents, nil
+}
+
+// getBallSeries 获取 tagId -> series_id 映射
+func (p *Adapter) getBallSeries() (map[string]string, error) {
+	sportsURL := fmt.Sprintf("%s/sports", p.cfg.BaseURL)
+	sportsResp, err := p.httpClient.Get(sportsURL)
+	if err != nil {
+		return nil, fmt.Errorf("获取运动列表失败: %w", err)
+	}
+	defer func() {
+		if err := sportsResp.Body.Close(); err != nil {
+			p.logger.Errorf("关闭sports响应体失败: %v", err)
+		}
+	}()
+	var sports []struct {
+		Series string `json:"series"`
+		Tags   string `json:"tags"`
+	}
+	if err := json.NewDecoder(sportsResp.Body).Decode(&sports); err != nil {
+		return nil, fmt.Errorf("解析运动列表失败: %w", err)
+	}
+	ballSeries := make(map[string]string, len(sports))
+	for _, s := range sports {
+		tagSlice := strings.Split(s.Tags, ",")
+		for _, tag := range tagSlice {
+			ballSeries[tag] = s.Series
+		}
+	}
+	return ballSeries, nil
+}
+
+// FetchEventsWithYield 实现 EventsStreamer：按 series 流式拉取，每批落库由调用方处理；同一赛事（event ID）跨批去重。
+func (p *Adapter) FetchEventsWithYield(ctx context.Context, eventType string, yield func(batch []*model.PlatformRawEvent) error) (total int, err error) {
+	_ = ctx
+	ballSeries, err := p.getBallSeries()
+	if err != nil {
+		return 0, err
+	}
+	seen := make(map[string]struct{})
+	for tagId, series := range ballSeries {
+		if len(tagId) == 0 || len(series) == 0 {
+			continue
+		}
+		eventsURL := fmt.Sprintf("%s/events?series_id=%s&tag_id=%s&active=true&closed=false&order=startTime&ascending=true",
+			p.cfg.BaseURL, series, tagId)
+		eventsResp, err := p.httpClient.Get(eventsURL)
+		if err != nil {
+			p.logger.Warnf("爬取%s事件失败: %v", series, err)
+			continue
+		}
+		polyEvents, parseErr := p.parsePolymarketEvents(eventsResp, series)
+		if closeErr := eventsResp.Body.Close(); closeErr != nil {
+			p.logger.Errorf("关闭%s事件响应体失败: %v", series, closeErr)
+		}
+		if parseErr != nil {
+			p.logger.Warnf("解析%s事件失败: %v", series, parseErr)
+			continue
+		}
+		var batch []*model.PlatformRawEvent
+		for _, e := range polyEvents {
+			if _, dup := seen[e.ID]; dup {
+				continue
+			}
+			seen[e.ID] = struct{}{}
+			batch = append(batch, &model.PlatformRawEvent{
+				Platform: p.GetName(),
+				ID:       e.ID,
+				Type:     eventType,
+				Data:     e,
+			})
+		}
+		if len(batch) > 0 && yield != nil {
+			if err := yield(batch); err != nil {
+				return total, err
+			}
+			total += len(batch)
+		}
+	}
+	p.logger.Infof("Polymarket 流式拉取完成，共 %d 条", total)
+	return total, nil
 }
 
 func (p *Adapter) parsePolymarketEvents(resp *http.Response, series string) ([]model.PolymarketEvent, error) {
@@ -174,11 +235,11 @@ func (p *Adapter) ConvertToDBModel(raw []*model.PlatformRawEvent, platformID uin
 			continue
 		}
 
-		// 1. 转换为Event模型（补充必填的EventUUID，截断超长字段）
-		eventUUID := uuid.New().String() // 生成全局唯一ID（与数据库字段匹配）
+		// 1. 转换为Event模型（确定性 event_uuid：platform_id_platform_event_id）
 		// 截断超长字段，避免数据库字段超限
 		title := p.truncateString(polyEvent.Title, 256, "title")
 		platformEventID := p.truncateString(polyEvent.ID, 128, "platform_event_id")
+		eventUUID := fmt.Sprintf("%d_%s", platformID, platformEventID)
 
 		// 核心修复：将字符串时间解析为time.Time类型
 		startTime := p.parseTimeStr(polyEvent.StartDate, "StartDate")

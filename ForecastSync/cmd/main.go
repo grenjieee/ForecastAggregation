@@ -1,18 +1,54 @@
 package main
 
 import (
+	"database/sql"
 	"fmt"
 	"log"
+	"net/url"
+	"strings"
+
+	_ "github.com/jackc/pgx/v4/stdlib"
 
 	"ForecastSync/internal/api"
 	"ForecastSync/internal/config"
+	"ForecastSync/internal/model"
 
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger" // 保留logger包，但修正使用方式
+	"gorm.io/gorm/logger"
 )
+
+// ensureDatabaseExists 当目标库不存在时，连接到 postgres 默认库并创建目标库（幂等）。
+// dsn 须为 URL 形式，如 postgres://user:pass@host:port/dbname?options
+func ensureDatabaseExists(dsn string) error {
+	u, err := url.Parse(dsn)
+	if err != nil {
+		return err
+	}
+	dbname := strings.TrimPrefix(u.Path, "/")
+	if idx := strings.Index(dbname, "?"); idx >= 0 {
+		dbname = dbname[:idx]
+	}
+	dbname = strings.TrimSpace(dbname)
+	if dbname == "" || dbname == "postgres" {
+		return nil
+	}
+	u.Path = "/postgres"
+	adminDSN := u.String()
+	db, err := sql.Open("pgx", adminDSN)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	err = db.QueryRow("SELECT 1 FROM pg_database WHERE datname = $1", dbname).Scan(new(int))
+	if err == sql.ErrNoRows {
+		_, err = db.Exec("CREATE DATABASE " + `"` + strings.ReplaceAll(dbname, `"`, `""`) + `"`)
+		return err
+	}
+	return err
+}
 
 func main() {
 	// 1. 加载配置文件
@@ -30,14 +66,21 @@ func main() {
 	// 核心修正：logger.Default() 是方法，不是变量！
 	gormLogger := logger.Default.LogMode(logger.Info) // 显示SQL日志（Info级别）
 
-	// 4. 初始化MySQL连接（使用正确的GORM日志配置）
-	// 4. 初始化PostgreSQL连接（替换MySQL驱动）
-	// 注意：PostgreSQL的DSN格式与MySQL不同，需确保cfg中配置的是PG的DSN
+	// 4. 初始化 PostgreSQL 连接（库不存在则先创建再连）
 	db, err := gorm.Open(postgres.Open(cfg.MySQL.DSN), &gorm.Config{
-		Logger: gormLogger, // 使用正确的GORM日志器
+		Logger: gormLogger,
 	})
 	if err != nil {
-		logrusLogger.Fatalf("连接PostgreSQL失败: %v", err)
+		if strings.Contains(err.Error(), "does not exist") || strings.Contains(err.Error(), "3D000") {
+			logrusLogger.Info("目标数据库不存在，尝试自动创建…")
+			if e := ensureDatabaseExists(cfg.MySQL.DSN); e != nil {
+				logrusLogger.Fatalf("创建数据库失败: %v", e)
+			}
+			db, err = gorm.Open(postgres.Open(cfg.MySQL.DSN), &gorm.Config{Logger: gormLogger})
+		}
+		if err != nil {
+			logrusLogger.Fatalf("连接PostgreSQL失败: %v", err)
+		}
 	}
 	logrusLogger.Info("PostgreSQL连接成功")
 
@@ -51,12 +94,28 @@ func main() {
 	sqlDB.SetMaxIdleConns(cfg.MySQL.MaxIdleConns)       // 同上
 	sqlDB.SetConnMaxLifetime(cfg.MySQL.ConnMaxLifetime) // 同上
 
-	// 6. 配置Gin运行模式（从配置读取：debug/release）
+	// 6. 库表不存在则自动创建（按依赖顺序迁移）
+	if err := db.AutoMigrate(
+		&model.User{},
+		&model.Platform{},
+		&model.Event{},
+		&model.EventOdds{},
+		&model.Order{},
+		&model.ContractEvent{},
+		&model.SettlementRecord{},
+		&model.CanonicalEvent{},
+		&model.EventPlatformLink{},
+	); err != nil {
+		logrusLogger.Fatalf("数据库表结构迁移失败: %v", err)
+	}
+	logrusLogger.Info("数据库表结构检查完成（不存在则已创建）")
+
+	// 7. 配置Gin运行模式（从配置读取：debug/release）
 	gin.SetMode(cfg.Server.Mode)
 	r := gin.Default()
 	logrusLogger.Infof("Gin运行模式: %s", cfg.Server.Mode)
 
-	// 7. 注册API路由（传入全局配置）
+	// 8. 注册API路由（传入全局配置）
 	syncHandler := api.NewSyncHandler(db, logrusLogger, cfg)
 	r.POST("/sync/platform/:platform", syncHandler.SyncPlatformHandler)
 
@@ -65,7 +124,12 @@ func main() {
 	r.GET("/api/markets", marketHandler.ListMarkets)
 	r.GET("/api/markets/:event_uuid", marketHandler.GetMarketDetail)
 
-	// 8. 启动服务（从配置读取端口）
+	// 订单查询接口
+	orderHandler := api.NewOrderHandler(db, logrusLogger)
+	r.GET("/api/orders", orderHandler.ListOrders)
+	r.GET("/api/orders/:order_uuid", orderHandler.GetOrderDetail)
+
+	// 9. 启动服务（从配置读取端口）
 	port := cfg.Server.Port
 	logrusLogger.Infof("服务启动成功，端口：%d", port)
 	if err := r.Run(fmt.Sprintf(":%d", port)); err != nil {

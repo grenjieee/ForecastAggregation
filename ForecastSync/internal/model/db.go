@@ -37,11 +37,12 @@ type Platform struct {
 
 type Event struct {
 	ID              uint64         `gorm:"column:id;primaryKey;autoIncrement;comment:自增主键ID"`
-	EventUUID       string         `gorm:"column:event_uuid;type:varchar(128);uniqueIndex;not null;comment:全局唯一ID"`
+	EventUUID       string         `gorm:"column:event_uuid;type:varchar(128);uniqueIndex;not null;comment:全局唯一ID，规则：platform_id_platform_event_id"`
 	Title           string         `gorm:"column:title;type:varchar(256);not null;comment:事件标题"`
 	Type            string         `gorm:"column:type;type:varchar(16);not null;comment:事件类型：sports/politics"`
-	PlatformID      uint64         `gorm:"column:platform_id;type:bigint;not null;comment:关联平台ID"`
-	PlatformEventID string         `gorm:"column:platform_event_id;type:varchar(128);not null;comment:平台原生ID"`
+	PlatformID      uint64         `gorm:"column:platform_id;type:bigint;not null;uniqueIndex:uq_platform_event;comment:关联平台ID"`
+	PlatformEventID string         `gorm:"column:platform_event_id;type:varchar(128);not null;uniqueIndex:uq_platform_event;comment:平台原生ID"`
+	CanonicalKey    *string        `gorm:"column:canonical_key;type:varchar(64);index;comment:聚合键，用于同场多平台归并"`
 	StartTime       time.Time      `gorm:"column:start_time;type:timestamp;not null;comment:开始时间"`
 	EndTime         time.Time      `gorm:"column:end_time;type:timestamp;not null;comment:结束时间"`
 	ResolveTime     *time.Time     `gorm:"column:resolve_time;type:timestamp;comment:结果公布时间"`
@@ -61,6 +62,7 @@ type EventOdds struct {
 	UniqueEventPlatform string         `gorm:"column:unique_event_platform;type:varchar(128);uniqueIndex;not null;comment:事件+平台唯一标识"`
 	PlatformID          uint64         `gorm:"column:platform_id;type:bigint;not null;comment:平台ID"`
 	OptionName          string         `gorm:"column:option_name;type:varchar(64);not null;comment:赔率选项名称"`
+	OptionType          string         `gorm:"column:option_type;type:varchar(16);comment:归一化选项：win/draw/lose"`
 	Price               float64        `gorm:"column:price;type:decimal(10,2);not null;comment:赔率价格"` // 正确字段：price（不是odds）
 	Liquidity           float64        `gorm:"column:liquidity;type:decimal(10,2);default:0;comment:流动性"`
 	Volume              float64        `gorm:"column:volume;type:decimal(10,2);default:0;comment:交易量"`

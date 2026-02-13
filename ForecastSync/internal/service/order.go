@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"ForecastSync/internal/interfaces"
 	"ForecastSync/internal/model"
 	"ForecastSync/internal/repository"
 
@@ -32,21 +33,23 @@ type ChainBetEvent struct {
 
 // OrderService 负责从链上事件生成聚合订单
 type OrderService struct {
-	db             *gorm.DB
-	logger         *logrus.Logger
-	marketRepo     repository.MarketRepository
-	orderRepo      repository.OrderRepository
-	contractEvents repository.ContractEventRepository
+	db              *gorm.DB
+	logger          *logrus.Logger
+	marketRepo      repository.MarketRepository
+	orderRepo       repository.OrderRepository
+	contractEvents  repository.ContractEventRepository
+	tradingAdapters map[uint64]interfaces.TradingAdapter // platformID -> adapter，可为 nil
 }
 
-// NewOrderService 创建 OrderService
-func NewOrderService(db *gorm.DB, logger *logrus.Logger) *OrderService {
+// NewOrderService 创建 OrderService。tradingAdapters 可为 nil，则不调用真实下单
+func NewOrderService(db *gorm.DB, logger *logrus.Logger, tradingAdapters map[uint64]interfaces.TradingAdapter) *OrderService {
 	return &OrderService{
-		db:             db,
-		logger:         logger,
-		marketRepo:     repository.NewMarketRepository(db),
-		orderRepo:      repository.NewOrderRepository(db),
-		contractEvents: repository.NewContractEventRepository(db),
+		db:              db,
+		logger:          logger,
+		marketRepo:      repository.NewMarketRepository(db),
+		orderRepo:       repository.NewOrderRepository(db),
+		contractEvents:  repository.NewContractEventRepository(db),
+		tradingAdapters: tradingAdapters,
 	}
 }
 
@@ -90,7 +93,7 @@ func (s *OrderService) CreateOrderFromChainEvent(ctx context.Context, ev *ChainB
 		return err
 	}
 
-	// 5. 生成本地订单（不直接下第三方平台单，留给后续 TradingAdapter 接入）
+	// 5. 生成本地订单，先落库再调用 TradingAdapter 真实下单
 	orderUUID := uuid.NewString()
 	now := time.Now()
 	order := &model.Order{
@@ -101,13 +104,44 @@ func (s *OrderService) CreateOrderFromChainEvent(ctx context.Context, ev *ChainB
 		BetOption:  bestOptionName,
 		BetAmount:  ev.BetAmount,
 		LockedOdds: bestPrice,
-		Status:     "placed", // 资金已锁定，且已选好目标平台
+		Status:     "pending_place",
 		CreatedAt:  now,
 		UpdatedAt:  now,
 	}
 
 	if err := s.orderRepo.CreateOrder(ctx, order); err != nil {
 		return fmt.Errorf("创建订单失败: %w", err)
+	}
+
+	if err := s.contractEvents.UpdateOrderUUIDAndProcessed(ctx, ev.TxHash, orderUUID); err != nil {
+		s.logger.WithError(err).WithField("tx_hash", ev.TxHash).Warn("回写 contract_events.order_uuid 失败")
+	}
+
+	// 6. 若有 TradingAdapter，调用平台下单并回写 platform_order_id 与 status=placed
+	if s.tradingAdapters != nil {
+		if adapter := s.tradingAdapters[bestPlatformID]; adapter != nil {
+			req := &interfaces.PlaceOrderRequest{
+				PlatformID:      bestPlatformID,
+				PlatformEventID: event.PlatformEventID,
+				BetOption:       bestOptionName,
+				BetAmount:       ev.BetAmount,
+				LockedOdds:      bestPrice,
+			}
+			platformOrderID, err := adapter.PlaceOrder(ctx, req)
+			if err != nil {
+				s.logger.WithError(err).WithFields(logrus.Fields{
+					"order_uuid":  orderUUID,
+					"platform_id": bestPlatformID,
+				}).Warn("平台下单失败，订单保持 pending_place")
+			} else {
+				_ = s.orderRepo.UpdatePlatformOrderIDAndStatus(ctx, orderUUID, platformOrderID, "placed")
+				s.logger.WithField("order_uuid", orderUUID).WithField("platform_order_id", platformOrderID).Info("平台下单成功")
+			}
+		} else {
+			_ = s.orderRepo.UpdatePlatformOrderIDAndStatus(ctx, orderUUID, "", "placed")
+		}
+	} else {
+		_ = s.orderRepo.UpdatePlatformOrderIDAndStatus(ctx, orderUUID, "", "placed")
 	}
 
 	s.logger.WithFields(logrus.Fields{
@@ -132,7 +166,7 @@ func (s *OrderService) saveContractEvent(ctx context.Context, ev *ChainBetEvent)
 	now := time.Now()
 	ce := &model.ContractEvent{
 		EventType:   "BetPlaced",
-		OrderUUID:   "", // 此时本地订单尚未生成，可留空或后续通过关联补回
+		OrderUUID:   nil, // 可空，创建订单后回写
 		UserWallet:  ev.UserWallet,
 		TxHash:      ev.TxHash,
 		BlockNumber: &blockNumber,
@@ -175,4 +209,142 @@ func pickBestOdds(odds []*model.EventOdds, betOption string) (platformID uint64,
 	}
 
 	return pid, best, name, nil
+}
+
+// OrderListItem 订单列表项（含赛事标题）
+type OrderListItem struct {
+	OrderUUID       string  `json:"order_uuid"`
+	UserWallet      string  `json:"user_wallet"`
+	EventTitle      string  `json:"event_title"`
+	EventID         uint64  `json:"event_id"`
+	PlatformID      uint64  `json:"platform_id"`
+	PlatformOrderID string  `json:"platform_order_id,omitempty"`
+	BetOption       string  `json:"bet_option"`
+	BetAmount       float64 `json:"bet_amount"`
+	LockedOdds      float64 `json:"locked_odds"`
+	Status          string  `json:"status"`
+	CreatedAt       int64   `json:"created_at"`
+}
+
+// OrderListResult 订单列表返回
+type OrderListResult struct {
+	Page     int             `json:"page"`
+	PageSize int             `json:"page_size"`
+	Total    int64           `json:"total"`
+	Items    []OrderListItem `json:"items"`
+}
+
+// ListByUser 按用户钱包分页查询订单列表
+func (s *OrderService) ListByUser(ctx context.Context, userWallet string, page, pageSize int) (*OrderListResult, error) {
+	orders, total, err := s.orderRepo.ListByUser(ctx, userWallet, page, pageSize)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]OrderListItem, 0, len(orders))
+	for _, o := range orders {
+		eventTitle := ""
+		if e, err := s.marketRepo.GetEventByID(ctx, o.EventID); err == nil && e != nil {
+			eventTitle = e.Title
+		}
+		po := ""
+		if o.PlatformOrderID != nil {
+			po = *o.PlatformOrderID
+		}
+		items = append(items, OrderListItem{
+			OrderUUID:       o.OrderUUID,
+			UserWallet:      o.UserWallet,
+			EventTitle:      eventTitle,
+			EventID:         o.EventID,
+			PlatformID:      o.PlatformID,
+			PlatformOrderID: po,
+			BetOption:       o.BetOption,
+			BetAmount:       o.BetAmount,
+			LockedOdds:      o.LockedOdds,
+			Status:          o.Status,
+			CreatedAt:       o.CreatedAt.UnixMilli(),
+		})
+	}
+	return &OrderListResult{
+		Page:     page,
+		PageSize: pageSize,
+		Total:    total,
+		Items:    items,
+	}, nil
+}
+
+// OrderDetail 订单详情（含关联 event 与平台信息）
+type OrderDetail struct {
+	OrderUUID        string  `json:"order_uuid"`
+	UserWallet       string  `json:"user_wallet"`
+	EventID          uint64  `json:"event_id"`
+	EventUUID        string  `json:"event_uuid"`
+	EventTitle       string  `json:"event_title"`
+	PlatformID       uint64  `json:"platform_id"`
+	PlatformOrderID  string  `json:"platform_order_id,omitempty"`
+	BetOption        string  `json:"bet_option"`
+	BetAmount        float64 `json:"bet_amount"`
+	LockedOdds       float64 `json:"locked_odds"`
+	ExpectedProfit   float64 `json:"expected_profit"`
+	ActualProfit     float64 `json:"actual_profit"`
+	Status           string  `json:"status"`
+	FundLockTxHash   string  `json:"fund_lock_tx_hash,omitempty"`
+	SettlementTxHash string  `json:"settlement_tx_hash,omitempty"`
+	CreatedAt        int64   `json:"created_at"`
+	UpdatedAt        int64   `json:"updated_at"`
+}
+
+// GetOrderDetail 按 order_uuid 获取订单详情
+func (s *OrderService) GetOrderDetail(ctx context.Context, orderUUID string) (*OrderDetail, error) {
+	o, err := s.orderRepo.GetByUUID(ctx, orderUUID)
+	if err != nil {
+		return nil, err
+	}
+	detail := &OrderDetail{
+		OrderUUID:      o.OrderUUID,
+		UserWallet:     o.UserWallet,
+		EventID:        o.EventID,
+		BetOption:      o.BetOption,
+		BetAmount:      o.BetAmount,
+		LockedOdds:     o.LockedOdds,
+		ExpectedProfit: o.ExpectedProfit,
+		ActualProfit:   o.ActualProfit,
+		Status:         o.Status,
+		CreatedAt:      o.CreatedAt.UnixMilli(),
+		UpdatedAt:      o.UpdatedAt.UnixMilli(),
+	}
+	if o.PlatformOrderID != nil {
+		detail.PlatformOrderID = *o.PlatformOrderID
+	}
+	if o.FundLockTxHash != nil {
+		detail.FundLockTxHash = *o.FundLockTxHash
+	}
+	if o.SettlementTxHash != nil {
+		detail.SettlementTxHash = *o.SettlementTxHash
+	}
+	if e, err := s.marketRepo.GetEventByID(ctx, o.EventID); err == nil && e != nil {
+		detail.EventUUID = e.EventUUID
+		detail.EventTitle = e.Title
+	}
+	detail.PlatformID = o.PlatformID
+	return detail, nil
+}
+
+// OnSettlementCompleted 链上结算完成时调用：更新订单为 settled 并写入 settlement_records
+func (s *OrderService) OnSettlementCompleted(ctx context.Context, orderUUID, txHash string, settlementAmount, manageFee, gasFee float64) error {
+	o, err := s.orderRepo.GetByUUID(ctx, orderUUID)
+	if err != nil {
+		return fmt.Errorf("订单不存在: %w", err)
+	}
+	if err := s.orderRepo.UpdateOrderSettlement(ctx, orderUUID, txHash); err != nil {
+		return err
+	}
+	record := &model.SettlementRecord{
+		OrderUUID:        orderUUID,
+		UserWallet:       o.UserWallet,
+		SettlementAmount: settlementAmount,
+		ManageFee:        manageFee,
+		GasFee:           gasFee,
+		TxHash:           txHash,
+	}
+	return s.orderRepo.CreateSettlementRecord(ctx, record)
 }

@@ -5,7 +5,7 @@ server:
 
 # 数据库配置
 mysql:
-  dsn: "postgres://postgres:postgres@192.168.1.37:5432/forecast_aggregation?sslmode=disable&TimeZone=Asia/Shanghai"
+  dsn: "postgres://postgres:postgres@127.0.0.1:5433/forecast_aggregation?sslmode=disable&TimeZone=Asia/Shanghai"
   max_open_conns: 20
   max_idle_conns: 10
   conn_max_lifetime: 3600s
@@ -32,15 +32,18 @@ platforms:
     max_bet: 1
 
   kalshi:
-    base_url: "https://api.elections.kalshi.com/trade-api/v2" # Kalshi官方基础URL
-    sport_path: "/markets" # 市场数据接口路径
+    # 官方文档: https://docs.kalshi.com/api-reference/events/get-events
+    base_url: "https://api.elections.kalshi.com/trade-api/v2"
+    sport_path: "/markets" # 预留
+    # 仅拉取体育时：可填单个 series_ticker 覆盖；不填则从 GET /series 拉取体育类 series 并缓存约 4 小时，再按这些 ticker 请求 events
+    series_ticker: ""
     protocol: "rest"
-    timeout: 10 # 超时时间（匹配Kalshi建议）
+    timeout: 60 # 超时（秒）；走代理或拉取 with_nested_markets 时响应较慢，建议 30~60
     retry_count: 3 # 重试次数
     auth_key: "YOUR_KALSHI_API_KEY" # 替换为你的Kalshi API Key
     auth_secret: "YOUR_KALSHI_API_SECRET" # 替换为你的Kalshi API Secret
     #代理地址
-    proxy: "127.0.0.1:7890"
+    proxy: "http://127.0.0.1:7890"
     # 最小下注金额
     min_bet: 1
     # 最大下注金额
