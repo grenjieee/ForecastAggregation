@@ -382,7 +382,13 @@ CREATE TRIGGER update_canonical_events_updated_at BEFORE UPDATE ON canonical_eve
 
 ## 快速启动
 
-- 1.修改配置文件 config/config.yaml 以下配置
+- 1. 配置敏感信息（不提交 git）：复制 `.env.example` 为 `.env`，填入真实值
+```bash
+cp .env.example .env
+# 编辑 .env，填写 KALSHI_AUTH_KEY、KALSHI_AUTH_SECRET 等
+```
+
+- 2. 修改配置文件 config/config.yaml 以下配置（非敏感部分）
 ```yaml
 # 数据库配置
 mysql:
@@ -412,8 +418,7 @@ platforms:
     protocol: "rest"
     timeout: 10 # 超时时间（匹配Kalshi建议）
     retry_count: 3 # 重试次数
-    auth_key: "YOUR_KALSHI_API_KEY" # 替换为你的Kalshi API Key
-    auth_secret: "YOUR_KALSHI_API_SECRET" # 替换为你的Kalshi API Secret
+    # auth_key、auth_secret 从 .env 读取（KALSHI_AUTH_KEY、KALSHI_AUTH_SECRET），此处留空即可
     #代理地址 根据实际情况配置
     proxy: "127.0.0.1:7890"
     # 最小下注金额
@@ -421,7 +426,7 @@ platforms:
     # 最大下注金额
     max_bet: 1
 ```
-- 2.执行启动命令
+- 3. 执行启动命令
 ```shell
 go run cmd/main.go
 ```
@@ -433,7 +438,7 @@ time="2026-02-08T18:19:29+08:00" level=info msg="Gin运行模式: debug"
 time="2026-02-08T18:19:29+08:00" level=info msg="服务启动成功，端口：8081"
 ```
 
-- 3.执行以下命令触发同步指定预测平台的数据
+- 4. 执行以下命令触发同步指定预测平台的数据
 ```shell
 curl --location --request POST 'localhost:8081/sync/platform/polymarket' \
 --data ''

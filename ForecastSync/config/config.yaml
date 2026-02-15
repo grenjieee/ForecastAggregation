@@ -40,8 +40,9 @@ platforms:
     protocol: "rest"
     timeout: 60 # 超时（秒）；走代理或拉取 with_nested_markets 时响应较慢，建议 30~60
     retry_count: 3 # 重试次数
-    auth_key: "YOUR_KALSHI_API_KEY" # 替换为你的Kalshi API Key
-    auth_secret: "YOUR_KALSHI_API_SECRET" # 替换为你的Kalshi API Secret
+    # 敏感信息从 .env 读取（KALSHI_AUTH_KEY, KALSHI_AUTH_SECRET），不提交 git
+    auth_key: ""
+    auth_secret: ""
     #代理地址
     proxy: "http://127.0.0.1:7890"
     # 最小下注金额

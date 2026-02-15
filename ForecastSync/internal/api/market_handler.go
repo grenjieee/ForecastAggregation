@@ -29,20 +29,17 @@ func NewMarketHandler(db *gorm.DB, logger *logrus.Logger) *MarketHandler {
 	}
 }
 
-// ListMarkets 市场列表接口
-// GET /api/markets?type=sports&status=active&platform=polymarket&page=1&page_size=20
+// ListMarkets 市场列表接口（一期仅 Sports）
+// GET /api/markets?status=active&page=1&page_size=20
 func (h *MarketHandler) ListMarkets(c *gin.Context) {
-	eventType := c.DefaultQuery("type", "sports")
 	status := c.DefaultQuery("status", "active")
-	platform := c.Query("platform")
-
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
 
 	filter := repository.MarketFilter{
-		Type:     eventType,
+		Type:     "sports", // 一期固定
 		Status:   status,
-		Platform: platform,
+		Platform: "", // 一期不按平台过滤
 	}
 
 	result, err := h.marketService.ListMarkets(c.Request.Context(), filter, page, pageSize)

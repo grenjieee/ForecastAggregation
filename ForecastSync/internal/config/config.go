@@ -2,8 +2,10 @@ package config
 
 import (
 	"fmt"
+	"os"
 	"time"
 
+	"github.com/joho/godotenv"
 	"github.com/spf13/viper"
 	"gorm.io/gorm"
 )
@@ -52,26 +54,56 @@ type PlatformConfig struct {
 	MaxBet       float64 `mapstructure:"max_bet"`       // 最大下注金额
 }
 
-// LoadConfig 加载配置文件（默认路径：config/config.yaml）
+// LoadConfig 加载配置文件（config/config.yaml），敏感项从 .env 覆盖（不提交 git）
 func LoadConfig() (*Config, error) {
-	// 设置配置文件规则
-	viper.SetConfigName("config")   // 文件名：config.yaml
-	viper.SetConfigType("yaml")     // 格式：yaml
-	viper.AddConfigPath("./config") // 路径：项目根目录/config/
+	// 1. 加载 .env（若存在），env 中的值会覆盖 config.yaml 中同名字段
+	_ = godotenv.Load() // 忽略错误（.env 可不存在）
 
-	// 读取配置文件
+	// 2. 读取 config.yaml
+	viper.SetConfigName("config")
+	viper.SetConfigType("yaml")
+	viper.AddConfigPath("./config")
 	if err := viper.ReadInConfig(); err != nil {
 		return nil, fmt.Errorf("读取配置文件失败: %w", err)
 	}
 
-	// 解析到结构体（注意：Duration类型需要viper自动解析）
-	viper.SetTypeByDefaultValue(true) // 启用默认类型解析（如Duration）
+	viper.SetTypeByDefaultValue(true)
 	var cfg Config
 	if err := viper.Unmarshal(&cfg); err != nil {
 		return nil, fmt.Errorf("解析配置文件失败: %w", err)
 	}
 
+	// 3. 敏感字段：用 env 覆盖（优先级 env > yaml）
+	overrideFromEnv(&cfg)
 	return &cfg, nil
+}
+
+// overrideFromEnv 用环境变量覆盖敏感配置
+func overrideFromEnv(cfg *Config) {
+	if k, ok := cfg.Platforms["kalshi"]; ok {
+		if v := os.Getenv("KALSHI_AUTH_KEY"); v != "" {
+			k.AuthKey = v
+		}
+		if v := os.Getenv("KALSHI_AUTH_SECRET"); v != "" {
+			k.AuthSecret = v
+		}
+		if v := os.Getenv("KALSHI_PROXY"); v != "" {
+			k.Proxy = v
+		}
+		cfg.Platforms["kalshi"] = k
+	}
+	if p, ok := cfg.Platforms["polymarket"]; ok {
+		if v := os.Getenv("POLYMARKET_AUTH_TOKEN"); v != "" {
+			p.AuthToken = v
+		}
+		if v := os.Getenv("POLYMARKET_PROXY"); v != "" {
+			p.Proxy = v
+		}
+		cfg.Platforms["polymarket"] = p
+	}
+	if v := os.Getenv("MYSQL_DSN"); v != "" {
+		cfg.MySQL.DSN = v
+	}
 }
 
 // GetGORMConfig GetMySQLConfig 获取MySQL配置（适配GORM）
