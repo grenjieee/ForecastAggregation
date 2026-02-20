@@ -80,8 +80,20 @@ func (k *Adapter) FetchEventsWithYield(ctx context.Context, eventType string, yi
 	return len(raw), nil
 }
 
-// getSportsSeriesTickers 返回体育类 series_ticker 列表（优先配置，否则走 GET /series 并缓存）
+// getSportsSeriesTickers 返回体育类 series_ticker 列表（优先配置：series_tickers > series_ticker，否则走 GET /series 并缓存）
 func (k *Adapter) getSportsSeriesTickers() ([]string, error) {
+	if len(k.cfg.SeriesTickers) > 0 {
+		var out []string
+		for _, t := range k.cfg.SeriesTickers {
+			if t = strings.TrimSpace(t); t != "" {
+				out = append(out, t)
+			}
+		}
+		if len(out) > 0 {
+			k.logger.Infof("Kalshi 使用配置的 series_tickers 共 %d 个做精准拉取", len(out))
+			return out, nil
+		}
+	}
 	if t := strings.TrimSpace(k.cfg.SeriesTicker); t != "" {
 		return []string{t}, nil
 	}
@@ -250,24 +262,44 @@ func (k *Adapter) FetchSportsEventsWithYield(ctx context.Context, yield func(bat
 	return total, nil
 }
 
-// fetchEventsRawByURL 请求 URL 并返回原始 API 事件列表（用于按 series 合并去重）
+// fetchEventsRawByURL 请求 URL 并返回原始 API 事件列表（用于按 series 合并去重）。
+// 对 503/429 使用指数退避重试（次数取自配置 retry_count），便于在 Kalshi cache 短暂不可用时仍能拉取到有效数据。
 func (k *Adapter) fetchEventsRawByURL(eventsURL string) ([]model.KalshiEventApi, error) {
-	resp, err := k.httpClient.Get(eventsURL)
-	if err != nil {
-		return nil, err
+	retries := k.cfg.RetryCount
+	if retries <= 0 {
+		retries = 2
 	}
-	defer func() {
-		_ = resp.Body.Close()
-	}()
-	if resp.StatusCode != http.StatusOK {
+	var lastErr error
+	for attempt := 0; attempt <= retries; attempt++ {
+		if attempt > 0 {
+			backoff := time.Duration(1<<uint(attempt-1)) * 2 * time.Second
+			if backoff > 30*time.Second {
+				backoff = 30 * time.Second
+			}
+			k.logger.Infof("Kalshi 请求重试 %d/%d，%v 后重试", attempt, retries, backoff)
+			time.Sleep(backoff)
+		}
+		resp, err := k.httpClient.Get(eventsURL)
+		if err != nil {
+			lastErr = err
+			continue
+		}
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("API %d: %s", resp.StatusCode, string(body))
+		_ = resp.Body.Close()
+		if resp.StatusCode == http.StatusOK {
+			var apiResp model.KalshiEventsResponse
+			if err := json.Unmarshal(body, &apiResp); err != nil {
+				return nil, err
+			}
+			return apiResp.Events, nil
+		}
+		lastErr = fmt.Errorf("API %d: %s", resp.StatusCode, string(body))
+		// 仅对 503（含 cache 不可用）、429（限流）重试
+		if resp.StatusCode != 503 && resp.StatusCode != 429 {
+			return nil, lastErr
+		}
 	}
-	var apiResp model.KalshiEventsResponse
-	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
-		return nil, err
-	}
-	return apiResp.Events, nil
+	return nil, lastErr
 }
 
 // fetchEventsByURL 请求 URL 并转为 PlatformRawEvent（非体育或单次请求用）

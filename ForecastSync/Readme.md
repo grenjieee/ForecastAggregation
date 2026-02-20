@@ -35,10 +35,16 @@ ForecastSync/
 说明：应用启动时会**自动创建不存在的数据库**（需能连上 `postgres` 默认库），并执行 GORM 迁移**表不存在则按 model 自动创建**。若需手动初始化或与 Go 模型保持一致，可在 `forecast_aggregation` 库中执行下方完整 SQL（幂等，可重复执行）。
 
 ```sql
--- 创建数据库（仅首次或单独执行）
+-- ============================================================
+-- 创建数据库（仅首次或单独执行，需在 postgres 等已有库中运行）
+-- ============================================================
 -- CREATE DATABASE forecast_aggregation
---   WITH OWNER = postgres ENCODING = 'UTF8' LC_COLLATE = 'en_US.UTF-8' LC_CTYPE = 'en_US.UTF-8'
---   TABLESPACE = pg_default CONNECTION LIMIT = -1;
+--   WITH OWNER = postgres
+--   ENCODING = 'UTF8'
+--   LC_COLLATE = 'en_US.UTF-8'
+--   LC_CTYPE = 'en_US.UTF-8'
+--   TABLESPACE = pg_default
+--   CONNECTION LIMIT = -1;
 
 SET TIME ZONE 'UTC';
 
@@ -59,7 +65,7 @@ CREATE TABLE IF NOT EXISTS users (
     updated_at TIMESTAMP DEFAULT NOW()
 );
 COMMENT ON TABLE users IS '用户基础信息表，关联钱包地址作为唯一标识';
-COMMENT ON COLUMN users.id IS '自增主键ID';
+COMMENT ON COLUMN users.id IS '自增主键';
 COMMENT ON COLUMN users.wallet_address IS '用户钱包地址（0x开头，小写存储）';
 COMMENT ON COLUMN users.total_profit IS '用户累计盈利（USDC，保留6位小数）';
 COMMENT ON COLUMN users.total_loss IS '用户累计亏损（USDC，保留6位小数）';
@@ -69,7 +75,7 @@ COMMENT ON COLUMN users.is_active IS '用户是否活跃：true=活跃，false=�
 COMMENT ON COLUMN users.created_at IS '用户创建时间（首次登录时间）';
 COMMENT ON COLUMN users.updated_at IS '用户信息更新时间';
 CREATE INDEX IF NOT EXISTS idx_users_created_at ON users(created_at);
-COMMENT ON INDEX idx_users_created_at IS '用户创建时间索引，用于按时间筛选用户';
+COMMENT ON INDEX idx_users_created_at IS '创建时间索引';
 
 -- ------------------------------
 -- 2. 第三方平台配置表（platforms）
@@ -90,7 +96,7 @@ CREATE TABLE IF NOT EXISTS platforms (
     updated_at TIMESTAMP DEFAULT NOW()
 );
 COMMENT ON TABLE platforms IS '第三方预测平台配置表，管理多平台对接参数';
-COMMENT ON COLUMN platforms.id IS '自增主键ID';
+COMMENT ON COLUMN platforms.id IS '自增主键';
 COMMENT ON COLUMN platforms.name IS '第三方预测平台名称（如Polymarket、Kalshi）';
 COMMENT ON COLUMN platforms.type IS '平台类型：chain=链上平台，centralized=中心化平台';
 COMMENT ON COLUMN platforms.api_url IS '中心化平台API接口地址';
@@ -109,8 +115,8 @@ CREATE INDEX IF NOT EXISTS idx_platforms_is_hot ON platforms(is_hot);
 CREATE INDEX IF NOT EXISTS idx_platforms_is_enabled ON platforms(is_enabled);
 -- 初始化平台数据（存在则跳过）
 INSERT INTO platforms (id, name, type, api_url, contract_address, rpc_url, api_key, api_limit, current_api_usage, is_hot, is_enabled, created_at, updated_at)
-VALUES (1, 'polymarket', 'centralized', 'https://gamma-api.polymarket.com', NULL, NULL, NULL, 600, 0, FALSE, TRUE, NOW(), NOW()),
-       (2, 'kalshi', 'centralized', 'https://api.kalshi.com/v1', NULL, NULL, NULL, 600, 0, FALSE, TRUE, NOW(), NOW())
+VALUES (1, 'polymarket', 'centralized', 'https://gamma-api.polymarket.com', NULL, NULL, NULL, 600, 0, FALSE, TRUE, '2026-02-08 18:05:07', '2026-02-08 18:05:10'),
+       (2, 'kalshi', 'centralized', 'https://api.elections.kalshi.com/trade-api/v2', NULL, NULL, NULL, 600, 0, FALSE, TRUE, '2026-02-08 18:06:34', '2026-02-08 18:06:39')
 ON CONFLICT (id) DO NOTHING;
 
 -- ------------------------------
@@ -138,7 +144,7 @@ CREATE TABLE IF NOT EXISTS events (
     CONSTRAINT uq_events_platform_event UNIQUE (platform_id, platform_event_id)
 );
 COMMENT ON TABLE events IS '预测事件主表，存储所有对接平台的预测事件信息';
-COMMENT ON COLUMN events.id IS '自增主键ID';
+COMMENT ON COLUMN events.id IS '自增主键';
 COMMENT ON COLUMN events.event_uuid IS '全局唯一事件ID，规则：platform_id_platform_event_id（确定性）';
 COMMENT ON COLUMN events.title IS '预测事件标题';
 COMMENT ON COLUMN events.type IS '事件类型：sports=体育，politics=政治，economy=经济，other=其他';
@@ -152,7 +158,7 @@ COMMENT ON COLUMN events.options IS '事件下注选项（JSON：如 {"yes":"发
 COMMENT ON COLUMN events.result IS '事件最终结果（对应 options 中的 key）';
 COMMENT ON COLUMN events.result_source IS '结果来源：oracle/platform/manual';
 COMMENT ON COLUMN events.result_verified IS '结果是否多源核验';
-COMMENT ON COLUMN events.status IS '事件状态：active/resolved/canceled';
+COMMENT ON COLUMN events.status IS '事件状态：active=进行中，resolved=已出结果，canceled=已取消';
 COMMENT ON COLUMN events.is_hot IS '是否为热门事件（优先缓存）';
 COMMENT ON COLUMN events.created_at IS '事件录入时间';
 COMMENT ON COLUMN events.updated_at IS '事件信息更新时间';
@@ -184,7 +190,7 @@ CREATE TABLE IF NOT EXISTS event_odds (
     deleted_at TIMESTAMP
 );
 COMMENT ON TABLE event_odds IS '事件赔率表，存储各平台各事件的实时赔率数据';
-COMMENT ON COLUMN event_odds.id IS '自增主键ID';
+COMMENT ON COLUMN event_odds.id IS '自增主键';
 COMMENT ON COLUMN event_odds.event_id IS '关联预测事件ID';
 COMMENT ON COLUMN event_odds.unique_event_platform IS '事件+平台唯一标识';
 COMMENT ON COLUMN event_odds.platform_id IS '关联第三方平台ID';
@@ -193,7 +199,8 @@ COMMENT ON COLUMN event_odds.option_type IS '归一化选项：win/draw/lose';
 COMMENT ON COLUMN event_odds.price IS '赔率价格';
 COMMENT ON COLUMN event_odds.liquidity IS '流动性';
 COMMENT ON COLUMN event_odds.volume IS '交易量';
-COMMENT ON COLUMN event_odds.updated_at IS '赔率更新时间（校验时效性）';
+COMMENT ON COLUMN event_odds.created_at IS '创建时间';
+COMMENT ON COLUMN event_odds.updated_at IS '更新时间';
 COMMENT ON COLUMN event_odds.deleted_at IS '软删除时间';
 CREATE INDEX IF NOT EXISTS idx_event_odds_event_id ON event_odds(event_id);
 CREATE INDEX IF NOT EXISTS idx_event_odds_platform_id ON event_odds(platform_id);
@@ -212,6 +219,7 @@ CREATE TABLE IF NOT EXISTS orders (
     platform_order_id VARCHAR(64),
     bet_option VARCHAR(32) NOT NULL,
     bet_amount NUMERIC(18,6) NOT NULL,
+    fund_currency VARCHAR(16) DEFAULT 'USDC',
     locked_odds NUMERIC(10,2) NOT NULL,
     expected_profit NUMERIC(18,6) DEFAULT 0,
     actual_profit NUMERIC(18,6) DEFAULT 0,
@@ -224,14 +232,16 @@ CREATE TABLE IF NOT EXISTS orders (
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
 );
-COMMENT ON TABLE orders IS '用户订单表，存储用户所有下注订单信息';
-COMMENT ON COLUMN orders.order_uuid IS '全局唯一订单ID';
+COMMENT ON TABLE orders IS '用户订单表';
+COMMENT ON COLUMN orders.id IS '自增主键';
+COMMENT ON COLUMN orders.order_uuid IS '订单唯一 ID（与合约订单号一致）';
 COMMENT ON COLUMN orders.user_wallet IS '关联用户钱包地址';
 COMMENT ON COLUMN orders.event_id IS '关联预测事件ID';
 COMMENT ON COLUMN orders.platform_id IS '下注的第三方平台ID';
 COMMENT ON COLUMN orders.platform_order_id IS '第三方平台原生订单号';
 COMMENT ON COLUMN orders.bet_option IS '用户下注选项（对应 events.options 的 key）';
 COMMENT ON COLUMN orders.bet_amount IS '用户下注金额（USDC）';
+COMMENT ON COLUMN orders.fund_currency IS '用户支付币种 USDC/USDT/ETH';
 COMMENT ON COLUMN orders.locked_odds IS '下单时锁定的赔率';
 COMMENT ON COLUMN orders.expected_profit IS '预期收益（USDC）';
 COMMENT ON COLUMN orders.actual_profit IS '实际收益（USDC，亏损为负）';
@@ -240,7 +250,7 @@ COMMENT ON COLUMN orders.manage_fee IS '平台1%管理费（USDC）';
 COMMENT ON COLUMN orders.gas_fee IS '链上Gas费（换算为USDC）';
 COMMENT ON COLUMN orders.fund_lock_tx_hash IS '资金锁定交易哈希（0x开头）';
 COMMENT ON COLUMN orders.settlement_tx_hash IS '结算交易哈希（0x开头）';
-COMMENT ON COLUMN orders.status IS '订单状态：pending_lock/locked/placed/settlable/settled/abnormal/refunded';
+COMMENT ON COLUMN orders.status IS '订单状态：pending_lock=待锁定，deposited=已入账，placing=下单中，placed=已下单，settlable=可结算，settled=已结算，withdrawable=可提现，withdraw_requested=已发起提现，withdrawn=已提现，abnormal=异常，refunded=已退款';
 COMMENT ON COLUMN orders.created_at IS '订单创建时间';
 COMMENT ON COLUMN orders.updated_at IS '订单状态更新时间';
 CREATE INDEX IF NOT EXISTS idx_orders_user_wallet ON orders(user_wallet);
@@ -255,8 +265,11 @@ CREATE INDEX IF NOT EXISTS idx_orders_created_at ON orders(created_at);
 CREATE TABLE IF NOT EXISTS contract_events (
     id BIGSERIAL PRIMARY KEY,
     event_type VARCHAR(32) NOT NULL,
-    order_uuid VARCHAR(64) REFERENCES orders(order_uuid),
+    contract_order_id VARCHAR(64) UNIQUE,
+    order_uuid VARCHAR(64),
     user_wallet VARCHAR(64) NOT NULL,
+    deposit_amount NUMERIC(18,6),
+    fund_currency VARCHAR(16),
     tx_hash VARCHAR(66) NOT NULL UNIQUE,
     block_number BIGINT,
     event_data JSONB NOT NULL,
@@ -264,16 +277,21 @@ CREATE TABLE IF NOT EXISTS contract_events (
     processed_at TIMESTAMP,
     created_at TIMESTAMP DEFAULT NOW()
 );
-COMMENT ON TABLE contract_events IS '链上事件记录表，用于后端监听和追溯；order_uuid 可空，BetPlaced 先入库再回写';
-COMMENT ON COLUMN contract_events.event_type IS '链上事件类型：FundLocked/SettlementCompleted/FundUnlocked 等';
-COMMENT ON COLUMN contract_events.order_uuid IS '关联订单UUID（可空，先记链上事件再创建订单后回写）';
+COMMENT ON TABLE contract_events IS '链上事件记录表，用于监听入账/结算等';
+COMMENT ON COLUMN contract_events.id IS '自增主键';
+COMMENT ON COLUMN contract_events.event_type IS '事件类型：DepositSuccess=入账成功，FundLocked=资金锁定，SettlementCompleted=结算完成，FundUnlocked=资金解锁';
+COMMENT ON COLUMN contract_events.contract_order_id IS '合约生成的订单号（DepositSuccess 入账时）';
+COMMENT ON COLUMN contract_events.order_uuid IS '关联订单UUID（place 创建订单后回写）';
 COMMENT ON COLUMN contract_events.user_wallet IS '用户钱包地址';
+COMMENT ON COLUMN contract_events.deposit_amount IS '入账金额（DepositSuccess）';
+COMMENT ON COLUMN contract_events.fund_currency IS '入账币种 USDC/USDT/ETH';
 COMMENT ON COLUMN contract_events.tx_hash IS '链上交易哈希（0x开头，唯一）';
 COMMENT ON COLUMN contract_events.block_number IS '区块高度';
 COMMENT ON COLUMN contract_events.event_data IS '事件原始数据（JSON）';
 COMMENT ON COLUMN contract_events.processed IS '是否已处理';
 COMMENT ON COLUMN contract_events.processed_at IS '处理时间';
-COMMENT ON COLUMN contract_events.created_at IS '链上事件发生时间';
+COMMENT ON COLUMN contract_events.created_at IS '创建时间';
+CREATE INDEX IF NOT EXISTS idx_contract_events_contract_order_id ON contract_events(contract_order_id);
 CREATE INDEX IF NOT EXISTS idx_contract_events_order_uuid ON contract_events(order_uuid);
 CREATE INDEX IF NOT EXISTS idx_contract_events_user_wallet ON contract_events(user_wallet);
 CREATE INDEX IF NOT EXISTS idx_contract_events_event_type ON contract_events(event_type);
@@ -295,8 +313,9 @@ CREATE TABLE IF NOT EXISTS settlement_records (
     settlement_time TIMESTAMP DEFAULT NOW(),
     created_at TIMESTAMP DEFAULT NOW()
 );
-COMMENT ON TABLE settlement_records IS '用户结算记录表，用于审计';
-COMMENT ON COLUMN settlement_records.order_uuid IS '关联订单UUID';
+COMMENT ON TABLE settlement_records IS '结算记录表，用于审计';
+COMMENT ON COLUMN settlement_records.id IS '自增主键';
+COMMENT ON COLUMN settlement_records.order_uuid IS '关联订单 UUID';
 COMMENT ON COLUMN settlement_records.user_wallet IS '用户钱包地址';
 COMMENT ON COLUMN settlement_records.settlement_amount IS '用户实际到账金额（USDC）';
 COMMENT ON COLUMN settlement_records.manage_fee IS '结算时扣除的1%管理费（USDC）';
@@ -330,7 +349,10 @@ COMMENT ON COLUMN canonical_events.home_team IS '主队';
 COMMENT ON COLUMN canonical_events.away_team IS '客队';
 COMMENT ON COLUMN canonical_events.match_time IS '比赛时间';
 COMMENT ON COLUMN canonical_events.canonical_key IS '规范化键，用于同场判定';
-COMMENT ON COLUMN canonical_events.status IS '状态：active 等';
+COMMENT ON COLUMN canonical_events.id IS '自增主键（即 canonical_id）';
+COMMENT ON COLUMN canonical_events.status IS '状态：active=进行中，resolved=已结束';
+COMMENT ON COLUMN canonical_events.created_at IS '创建时间';
+COMMENT ON COLUMN canonical_events.updated_at IS '更新时间';
 
 -- ------------------------------
 -- 9. 聚合赛事-平台事件映射（event_platform_links）
@@ -342,7 +364,11 @@ CREATE TABLE IF NOT EXISTS event_platform_links (
     platform_id BIGINT NOT NULL REFERENCES platforms(id),
     CONSTRAINT uq_canonical_platform UNIQUE (canonical_event_id, platform_id)
 );
-COMMENT ON TABLE event_platform_links IS '聚合赛事与平台事件映射';
+COMMENT ON TABLE event_platform_links IS '聚合赛事与平台事件映射表';
+COMMENT ON COLUMN event_platform_links.id IS '自增主键';
+COMMENT ON COLUMN event_platform_links.canonical_event_id IS '关联聚合赛事 ID';
+COMMENT ON COLUMN event_platform_links.event_id IS '关联平台事件 ID';
+COMMENT ON COLUMN event_platform_links.platform_id IS '平台 ID';
 
 -- ------------------------------
 -- 触发器：自动更新 updated_at
@@ -385,47 +411,70 @@ CREATE TRIGGER update_canonical_events_updated_at BEFORE UPDATE ON canonical_eve
 - 1. 配置敏感信息（不提交 git）：复制 `.env.example` 为 `.env`，填入真实值
 ```bash
 cp .env.example .env
-# 编辑 .env，填写 KALSHI_AUTH_KEY、KALSHI_AUTH_SECRET 等
+# 编辑 .env 填写：
+# - KALSHI_AUTH_KEY、KALSHI_AUTH_SECRET（Kalshi 下单）
+# - POLYMARKET_AUTH_KEY、POLYMARKET_AUTH_SECRET、POLYMARKET_AUTH_TOKEN、POLYMARKET_AUTH_PRIVATE_KEY（Polymarket 下单）
+# - MYSQL_DSN（可选，覆盖数据库连接）
+# - KALSHI_PROXY、POLYMARKET_PROXY（可选，代理地址）
 ```
 
 - 2. 修改配置文件 config/config.yaml 以下配置（非敏感部分）
 ```yaml
 # 数据库配置
 mysql:
-  #使用的是postgres,请修改成自己环境下postgres的配置
+  # 使用 postgres，请修改成自己环境下 postgres 的配置；也可通过 .env 的 MYSQL_DSN 覆盖
   dsn: "postgres://postgres:postgres@127.0.0.1:5433/forecast_aggregation?sslmode=disable&TimeZone=Asia/Shanghai"
 
 # 各平台独立配置
 platforms:
-  # Polymarket配置
+  # Polymarket 配置（gamma 拉事件，clob 下单）
   polymarket:
     base_url: "https://gamma-api.polymarket.com"
+    clob_base_url: "https://clob.polymarket.com"  # CLOB 地址，测试/生产共用
     protocol: "rest"
     timeout: 10
     retry_count: 2
+    # auth_key、auth_secret、auth_token、auth_private_key 从 .env 读取，此处留空
     auth_token: ""
-    #代理地址 注意：因为polymarket是国外的，需要开代理才能访问，工程请求默认不会被服务器开启的梯子代理，因此需要指定代理地址
-    #如果本地可以直接访问外网，这这个proxy:直接置空即可
+    auth_key: ""
+    auth_secret: ""
+    auth_private_key: ""
+    # 代理地址（也可用 POLYMARKET_PROXY 覆盖）；polymarket 为国外服务，需代理或直连
     proxy: "http://127.0.0.1:7890"
-    # 最小下注金额
     min_bet: 1
-    # 最大下注金额
     max_bet: 1
 
   kalshi:
-    base_url: "https://trading-api.kalshi.com/trade-api/v2" # Kalshi官方基础URL
-    sport_path: "/markets" # 市场数据接口路径
+    base_url: "https://demo-api.kalshi.co/trade-api/v2"  # 测试: demo-api / 生产: api.elections
+    sport_path: "/markets"
     protocol: "rest"
-    timeout: 10 # 超时时间（匹配Kalshi建议）
-    retry_count: 3 # 重试次数
-    # auth_key、auth_secret 从 .env 读取（KALSHI_AUTH_KEY、KALSHI_AUTH_SECRET），此处留空即可
-    #代理地址 根据实际情况配置
-    proxy: "127.0.0.1:7890"
-    # 最小下注金额
+    timeout: 60
+    retry_count: 3
+    series_ticker: ""
+    series_tickers: []   # 例: ["NFL","NBA"] 精准拉取体育
+    # auth_key、auth_secret 从 .env 读取（KALSHI_AUTH_KEY、KALSHI_AUTH_SECRET），此处留空
+    auth_key: ""
+    auth_secret: ""
+    proxy: "http://127.0.0.1:7890"
     min_bet: 1
-    # 最大下注金额
     max_bet: 1
 ```
+
+**环境变量说明（.env）**
+
+| 变量名 | 用途 | 必填 |
+|--------|------|------|
+| KALSHI_AUTH_KEY | Kalshi API Key | 下单时必填 |
+| KALSHI_AUTH_SECRET | Kalshi 私钥（签名用） | 下单时必填 |
+| POLYMARKET_AUTH_KEY | Polymarket CLOB L2 API Key | 下单时必填 |
+| POLYMARKET_AUTH_SECRET | Polymarket CLOB L2 API Secret | 下单时必填 |
+| POLYMARKET_AUTH_TOKEN | Polymarket CLOB L2 Passphrase | 下单时必填 |
+| POLYMARKET_AUTH_PRIVATE_KEY | Polymarket 钱包私钥（EIP-712 签名） | 下单时必填 |
+| MYSQL_DSN | 数据库连接串（覆盖 config.yaml） | 可选 |
+| KALSHI_PROXY | Kalshi 请求代理 | 可选 |
+| POLYMARKET_PROXY | Polymarket 请求代理 | 可选 |
+| CIRCLE_API_KEY | Circle 兑换 API Key | 可选 |
+
 - 3. 执行启动命令
 ```shell
 go run cmd/main.go

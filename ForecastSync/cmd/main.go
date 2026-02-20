@@ -10,10 +10,14 @@ import (
 
 	_ "github.com/jackc/pgx/v4/stdlib"
 
+	"ForecastSync/internal/adapter/kalshi"
+	"ForecastSync/internal/adapter/polymarket"
 	"ForecastSync/internal/api"
 	"ForecastSync/internal/config"
+	"ForecastSync/internal/interfaces"
 	"ForecastSync/internal/model"
 
+	"github.com/gin-contrib/pprof"
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
 	"gorm.io/driver/postgres"
@@ -119,6 +123,9 @@ func main() {
 	// 7. 配置Gin运行模式（从配置读取：debug/release）
 	gin.SetMode(cfg.Server.Mode)
 	r := gin.Default()
+
+	// 注册ppof 方便调试和监测性能问题
+	pprof.Register(r)
 	logrusLogger.Infof("Gin运行模式: %s", cfg.Server.Mode)
 
 	// 8. 注册API路由（传入全局配置）
@@ -130,10 +137,17 @@ func main() {
 	r.GET("/api/markets", marketHandler.ListMarkets)
 	r.GET("/api/markets/:event_uuid", marketHandler.GetMarketDetail)
 
-	// 订单查询接口
-	orderHandler := api.NewOrderHandler(db, logrusLogger)
+	// 订单查询与下单接口（注入 Kalshi/Polymarket 测试环境适配器）
+	tradingAdapters := map[uint64]interfaces.TradingAdapter{
+		1: polymarket.NewTradingAdapter(cfg),
+		2: kalshi.NewTradingAdapter(cfg),
+	}
+	orderHandler := api.NewOrderHandler(db, logrusLogger, tradingAdapters, cfg)
 	r.GET("/api/orders", orderHandler.ListOrders)
+	r.POST("/api/orders/place", orderHandler.PlaceOrder)
 	r.GET("/api/orders/:order_uuid", orderHandler.GetOrderDetail)
+	r.GET("/api/orders/:order_uuid/withdraw-info", orderHandler.GetWithdrawInfo)
+	r.POST("/api/orders/:order_uuid/withdraw", orderHandler.RequestWithdraw)
 
 	// 9. 启动服务（从配置读取端口）
 	port := cfg.Server.Port

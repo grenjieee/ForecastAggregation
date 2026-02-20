@@ -11,8 +11,11 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-// NewHTTPClient 通用HTTP客户端构建方法（支持代理、超时、自动解压）
+// NewHTTPClient 通用HTTP客户端构建方法（支持代理、超时、自动解压）。logger 可为 nil
 func NewHTTPClient(cfg *config.PlatformConfig, logger *logrus.Logger) *http.Client {
+	if logger == nil {
+		logger = logrus.New()
+	}
 	transport := &http.Transport{
 		MaxIdleConns:        100,
 		IdleConnTimeout:     30 * time.Second,

@@ -23,6 +23,22 @@ func NewContractListener(orderService *service.OrderService, logger *logrus.Logg
 	}
 }
 
+// OnDepositSuccess 收到链上 DepositSuccess 入账事件时调用
+// 仅将 contract_order_id、amount、currency 写入 contract_events，不创建 Order
+// 前端调用 POST /api/orders/place 时再校验并创建订单
+func (l *ContractListener) OnDepositSuccess(ctx context.Context, ev *service.DepositSuccessEvent) error {
+	if ev == nil {
+		return nil
+	}
+	err := l.orderService.SaveDepositSuccess(ctx, ev)
+	if err != nil {
+		l.logger.WithError(err).WithField("tx_hash", ev.TxHash).Error("SaveDepositSuccess failed")
+		return err
+	}
+	l.logger.WithField("contract_order_id", ev.ContractOrderID).WithField("amount", ev.Amount).Info("DepositSuccess saved")
+	return nil
+}
+
 // OnBetPlaced 收到链上 BetPlaced 事件时调用（由实际订阅逻辑解析后调用）
 func (l *ContractListener) OnBetPlaced(ctx context.Context, ev *service.ChainBetEvent) error {
 	if ev == nil {

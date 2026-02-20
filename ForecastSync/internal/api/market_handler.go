@@ -35,9 +35,10 @@ func (h *MarketHandler) ListMarkets(c *gin.Context) {
 	status := c.DefaultQuery("status", "active")
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+	marketType := c.DefaultQuery("type", "sports")
 
 	filter := repository.MarketFilter{
-		Type:     "sports", // 一期固定
+		Type:     marketType, // 一期固定
 		Status:   status,
 		Platform: "", // 一期不按平台过滤
 	}
