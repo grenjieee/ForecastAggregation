@@ -38,11 +38,98 @@ func (p *Adapter) GetName() string {
 	return "Polymarket"
 }
 
-// FetchEventResult 拉取已结束事件结果（stub：可后续接 Gamma API 的 event result）
+// FetchEventResult 拉取已结束事件结果：GET event 若 closed 则从 markets 的 outcomePrices 取价格为 1 的选项作为 result
 func (p *Adapter) FetchEventResult(ctx context.Context, platformEventID string) (result, status string, err error) {
 	_ = ctx
-	_ = platformEventID
-	return "", "", nil
+	base := strings.TrimSuffix(p.cfg.BaseURL, "/")
+	u := base + "/events/" + platformEventID
+	resp, err := p.httpClient.Get(u)
+	if err != nil {
+		return "", "", err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	rawBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", "", err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", "", fmt.Errorf("Polymarket event API %d: %s", resp.StatusCode, string(rawBody))
+	}
+	var pe model.PolymarketEvent
+	if err := json.Unmarshal(rawBody, &pe); err != nil {
+		return "", "", err
+	}
+	if !pe.Closed {
+		return "", "", nil
+	}
+	// 已关闭：从 markets 中找 outcomePrices 为 "1" 或 "1.0" 的 outcome 作为赢家
+	for _, market := range pe.Markets {
+		outcomes, _ := parseJSONArrayString(market.Outcomes)
+		prices, _ := parseJSONArrayString(market.OutcomePrices)
+		for i, outcomeName := range outcomes {
+			if i >= len(prices) {
+				break
+			}
+			priceStr := strings.TrimSpace(prices[i])
+			if priceStr == "1" || priceStr == "1.0" || strings.HasPrefix(priceStr, "1.0") {
+				return strings.TrimSpace(outcomeName), "resolved", nil
+			}
+		}
+	}
+	return "", "resolved", nil
+}
+
+// FetchLiveOdds 实现 LiveOddsFetcher：按事件 ID 从 Gamma 拉取当前 outcome 价格
+func (p *Adapter) FetchLiveOdds(ctx context.Context, platformID uint64, platformEventID string) ([]interfaces.LiveOddsRow, error) {
+	_ = ctx
+	base := strings.TrimSuffix(p.cfg.BaseURL, "/")
+	u := base + "/events/" + platformEventID
+	resp, err := p.httpClient.Get(u)
+	if err != nil {
+		return nil, fmt.Errorf("GET Polymarket event 失败: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	rawBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("Polymarket event API %d: %s", resp.StatusCode, string(rawBody))
+	}
+	var pe model.PolymarketEvent
+	if err := json.Unmarshal(rawBody, &pe); err != nil {
+		return nil, fmt.Errorf("解析 Polymarket event 失败: %w", err)
+	}
+	return p.polymarketEventToLiveOdds(platformID, pe)
+}
+
+func (p *Adapter) polymarketEventToLiveOdds(platformID uint64, pe model.PolymarketEvent) ([]interfaces.LiveOddsRow, error) {
+	var rows []interfaces.LiveOddsRow
+	for _, market := range pe.Markets {
+		outcomes, err := parseJSONArrayString(market.Outcomes)
+		if err != nil {
+			continue
+		}
+		prices, err := parseJSONArrayString(market.OutcomePrices)
+		if err != nil {
+			continue
+		}
+		for i, outcomeName := range outcomes {
+			if i >= len(prices) {
+				break
+			}
+			price, err := strconv.ParseFloat(prices[i], 64)
+			if err != nil {
+				continue
+			}
+			rows = append(rows, interfaces.LiveOddsRow{
+				PlatformID: platformID,
+				OptionName: strings.TrimSpace(outcomeName),
+				Price:      price,
+			})
+		}
+	}
+	return rows, nil
 }
 
 func (p *Adapter) FetchEvents(ctx context.Context, eventType string) ([]*model.PlatformRawEvent, error) {

@@ -105,6 +105,44 @@ func (r *EventRepository) SaveEvents(ctx context.Context, events []*model.Event,
 	return nil
 }
 
+// OddsRow 用于批量 upsert 的赔率行（仅更新 price，不创建新事件）
+type OddsRow struct {
+	EventID         uint64
+	PlatformID      uint64
+	PlatformEventID string
+	OptionName      string
+	Price           float64
+}
+
+// UpsertOddsForEvents 将实时赔率写入 event_odds（按 unique_event_platform 存在则更新 price）
+func (r *EventRepository) UpsertOddsForEvents(ctx context.Context, rows []OddsRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	now := time.Now()
+	var odds []*model.EventOdds
+	for _, row := range rows {
+		unique := fmt.Sprintf("%d_%s_%s", row.PlatformID, row.PlatformEventID, row.OptionName)
+		odds = append(odds, &model.EventOdds{
+			EventID:             row.EventID,
+			UniqueEventPlatform: unique,
+			PlatformID:          row.PlatformID,
+			OptionName:          row.OptionName,
+			Price:               row.Price,
+			UpdatedAt:           now,
+			CreatedAt:           now,
+		})
+	}
+	return r.db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "unique_event_platform"}},
+		DoUpdates: clause.Assignments(map[string]interface{}{
+			"price":       gorm.Expr("EXCLUDED.price"),
+			"option_name": gorm.Expr("EXCLUDED.option_name"),
+			"updated_at":  gorm.Expr("EXCLUDED.updated_at"),
+		}),
+	}).CreateInBatches(odds, 100).Error
+}
+
 // UpdateEventResult 更新事件结果与状态（结果同步后调用）
 func (r *EventRepository) UpdateEventResult(ctx context.Context, eventID uint64, result, status *string) error {
 	updates := map[string]interface{}{"updated_at": time.Now()}

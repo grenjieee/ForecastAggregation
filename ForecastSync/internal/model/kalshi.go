@@ -43,6 +43,7 @@ type KalshiMarketApi struct {
 	OpenTime         string `json:"open_time"`
 	CloseTime        string `json:"close_time"`
 	Status           string `json:"status"`
+	Result           string `json:"result"` // 结算结果：yes / no / scalar / 空
 	YesAskDollars    string `json:"yes_ask_dollars"`
 	NoAskDollars     string `json:"no_ask_dollars"`
 	LastPriceDollars string `json:"last_price_dollars"`

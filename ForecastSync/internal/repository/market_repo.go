@@ -24,6 +24,8 @@ type MarketRepository interface {
 	ListEventsForAggregation(ctx context.Context, eventType string, limit int) ([]*model.Event, error)
 	// ListEventsEndedButActive 已过结束时间仍为 active 的事件（供结果同步）
 	ListEventsEndedButActive(ctx context.Context, limit int) ([]*model.Event, error)
+	// ListEventsActiveOpen 仍在交易中的事件（status=active 且 end_time > now），供赔率定时同步
+	ListEventsActiveOpen(ctx context.Context, limit int) ([]*model.Event, error)
 	// GetEventByUUID 通过 event_uuid 获取事件
 	GetEventByUUID(ctx context.Context, eventUUID string) (*model.Event, error)
 	// GetOddsByEventIDs 批量查询事件对应的赔率
@@ -119,6 +121,20 @@ func (r *marketRepository) ListEventsEndedButActive(ctx context.Context, limit i
 	var events []*model.Event
 	if err := r.db.WithContext(ctx).Model(&model.Event{}).
 		Where("status = ? AND end_time < ?", "active", time.Now()).
+		Limit(limit).Find(&events).Error; err != nil {
+		return nil, err
+	}
+	return events, nil
+}
+
+// ListEventsActiveOpen 仍在交易中的事件（status=active 且 end_time > now）
+func (r *marketRepository) ListEventsActiveOpen(ctx context.Context, limit int) ([]*model.Event, error) {
+	if limit <= 0 {
+		limit = 1000
+	}
+	var events []*model.Event
+	if err := r.db.WithContext(ctx).Model(&model.Event{}).
+		Where("status = ? AND end_time > ?", "active", time.Now()).
 		Limit(limit).Find(&events).Error; err != nil {
 		return nil, err
 	}

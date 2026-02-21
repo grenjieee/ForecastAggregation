@@ -170,6 +170,60 @@ func (c *Client) ConvertToUSD(ctx context.Context, amount float64, currency stri
 	return usdAmount, nil
 }
 
+// ConvertFromUSD 调用 Circle Exchange Quotes API，将 USD 转为目标链资产（如 USDC）
+func (c *Client) ConvertFromUSD(ctx context.Context, amountUSD float64, toCurrency string) (float64, error) {
+	toCurrency = strings.ToUpper(toCurrency)
+	if toCurrency != "USDC" && toCurrency != "USDT" {
+		return 0, fmt.Errorf("Circle API 暂仅支持 USD 转 USDC/USDT，当前: %s", toCurrency)
+	}
+	if c.apiKey == "" {
+		return 0, fmt.Errorf("Circle API key 未配置")
+	}
+	reqBody := exchangeRateRequest{
+		From: exchangeAmount{
+			Amount:   strconv.FormatFloat(amountUSD, 'f', -1, 64),
+			Currency: "USD",
+		},
+		To: exchangeAmount{
+			Currency: toCurrency,
+		},
+		IdempotencyKey: uuid.New().String(),
+		Type:           "reference",
+	}
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		return 0, err
+	}
+	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/v1/exchange/quotes", bytes.NewReader(body))
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("Circle API 请求失败: %w", err)
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+	var result exchangeRateResponse
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return 0, fmt.Errorf("Circle API 响应解析失败: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		msg := result.Message
+		if msg == "" {
+			msg = string(respBody)
+		}
+		return 0, fmt.Errorf("Circle API 错误 %d: %s", resp.StatusCode, msg)
+	}
+	outAmount, err := strconv.ParseFloat(result.Data.To.Amount, 64)
+	if err != nil {
+		return 0, fmt.Errorf("Circle 返回金额解析失败: %w", err)
+	}
+	return outAmount, nil
+}
+
 // Ping 检查 Circle 服务连通性
 func (c *Client) Ping(ctx context.Context) error {
 	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/ping", nil)

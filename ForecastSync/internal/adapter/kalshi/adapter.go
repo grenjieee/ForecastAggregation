@@ -47,11 +47,113 @@ func (k *Adapter) GetName() string {
 	return "Kalshi"
 }
 
-// FetchEventResult 拉取已结束事件结果（stub：可后续接 Kalshi API）
+// FetchEventResult 拉取已结束事件结果：GET event 与 nested markets，取首个 market 的 result（yes/no）
 func (k *Adapter) FetchEventResult(ctx context.Context, platformEventID string) (result, status string, err error) {
 	_ = ctx
-	_ = platformEventID
+	base := strings.TrimSuffix(k.cfg.BaseURL, "/")
+	u := base + "/events/" + url.PathEscape(platformEventID) + "?with_nested_markets=true"
+	resp, err := k.httpClient.Get(u)
+	if err != nil {
+		return "", "", err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return "", "", fmt.Errorf("Kalshi event API %d: %s", resp.StatusCode, string(body))
+	}
+	var wrapper struct {
+		Event *model.KalshiEventApi `json:"event"`
+	}
+	if err := json.Unmarshal(body, &wrapper); err == nil && wrapper.Event != nil {
+		for _, m := range wrapper.Event.Markets {
+			r := strings.TrimSpace(strings.ToLower(m.Result))
+			if r == "yes" {
+				return "YES", "resolved", nil
+			}
+			if r == "no" {
+				return "NO", "resolved", nil
+			}
+		}
+		if len(wrapper.Event.Markets) > 0 {
+			m0 := wrapper.Event.Markets[0]
+			if strings.TrimSpace(strings.ToLower(m0.Status)) == "closed" || strings.TrimSpace(strings.ToLower(m0.Status)) == "finalized" {
+				return "", "resolved", nil
+			}
+		}
+		return "", "", nil
+	}
+	var single model.KalshiEventApi
+	if err := json.Unmarshal(body, &single); err != nil {
+		return "", "", nil
+	}
+	for _, m := range single.Markets {
+		r := strings.TrimSpace(strings.ToLower(m.Result))
+		if r == "yes" {
+			return "YES", "resolved", nil
+		}
+		if r == "no" {
+			return "NO", "resolved", nil
+		}
+	}
 	return "", "", nil
+}
+
+// FetchLiveOdds 实现 LiveOddsFetcher：按 event_ticker 拉取当前 YES/NO 价格
+func (k *Adapter) FetchLiveOdds(ctx context.Context, platformID uint64, platformEventID string) ([]interfaces.LiveOddsRow, error) {
+	_ = ctx
+	base := strings.TrimSuffix(k.cfg.BaseURL, "/")
+	u := base + "/events/" + url.PathEscape(platformEventID) + "?with_nested_markets=true"
+	resp, err := k.httpClient.Get(u)
+	if err != nil {
+		return nil, fmt.Errorf("GET event 失败: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("Kalshi event API %d: %s", resp.StatusCode, string(body))
+	}
+	// 单事件接口可能返回 { "event": {...} } 或直接 {...}
+	var wrapper struct {
+		Event *model.KalshiEventApi `json:"event"`
+	}
+	if err := json.Unmarshal(body, &wrapper); err == nil && wrapper.Event != nil && len(wrapper.Event.Markets) > 0 {
+		return k.kalshiMarketsToLiveOdds(platformID, wrapper.Event.Markets)
+	}
+	var single model.KalshiEventApi
+	if err := json.Unmarshal(body, &single); err != nil {
+		return nil, fmt.Errorf("解析 Kalshi event 响应失败: %w", err)
+	}
+	if len(single.Markets) == 0 {
+		return nil, fmt.Errorf("Kalshi event 无 markets")
+	}
+	return k.kalshiMarketsToLiveOdds(platformID, single.Markets)
+}
+
+func (k *Adapter) kalshiMarketsToLiveOdds(platformID uint64, markets []model.KalshiMarketApi) ([]interfaces.LiveOddsRow, error) {
+	var rows []interfaces.LiveOddsRow
+	for _, m := range markets {
+		yesPrice := m.YesAskDollars
+		if yesPrice == "" {
+			yesPrice = m.LastPriceDollars
+		}
+		if yesPrice != "" {
+			if p, err := strconv.ParseFloat(yesPrice, 64); err == nil {
+				rows = append(rows, interfaces.LiveOddsRow{PlatformID: platformID, OptionName: "YES", Price: p})
+			}
+		}
+		noPrice := m.NoAskDollars
+		if noPrice == "" && m.LastPriceDollars != "" {
+			if v, err := strconv.ParseFloat(m.LastPriceDollars, 64); err == nil {
+				noPrice = strconv.FormatFloat(1.0-v, 'f', -1, 64)
+			}
+		}
+		if noPrice != "" {
+			if p, err := strconv.ParseFloat(noPrice, 64); err == nil {
+				rows = append(rows, interfaces.LiveOddsRow{PlatformID: platformID, OptionName: "NO", Price: p})
+			}
+		}
+	}
+	return rows, nil
 }
 
 func (k *Adapter) FetchEvents(ctx context.Context, eventType string) ([]*model.PlatformRawEvent, error) {

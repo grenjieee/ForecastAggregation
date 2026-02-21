@@ -18,6 +18,20 @@ type Config struct {
 	Sync      SyncConfig                `mapstructure:"sync"`      // 同步调度配置
 	Platforms map[string]PlatformConfig `mapstructure:"platforms"` // 多平台独立配置
 	Circle    CircleConfig              `mapstructure:"circle"`    // Circle 兑换（占位，后续对接）
+	Chain     ChainConfig               `mapstructure:"chain"`     // 链与合约地址（监听与提现）
+}
+
+// ChainConfig 链 RPC 与合约地址（Polymarket 结算、FeeVault 等）
+type ChainConfig struct {
+	ChainID           int64  `mapstructure:"chain_id"`           // 链 ID，如 137 (Polygon)
+	RPCURL            string `mapstructure:"rpc_url"`            // RPC 地址
+	WSURL             string `mapstructure:"ws_url"`             // WebSocket 地址（事件订阅）
+	EscrowAddress     string `mapstructure:"escrow_address"`     // EscrowVault 合约地址
+	BetRouterAddress  string `mapstructure:"bet_router_address"` // BetRouter 合约地址（读 nonce、提交 intent）
+	SettlementAddress string `mapstructure:"settlement_address"` // Settlement 合约地址
+	FeeVaultAddress   string `mapstructure:"fee_vault_address"`  // FeeVault 合约地址
+	// ExecutorPrivateKey 从环境变量 CHAIN_EXECUTOR_PRIVATE_KEY 读取，不写进配置文件
+	ExecutorPrivateKey string
 }
 
 // CircleConfig Circle API 配置（可配置测试/生产环境）
@@ -30,8 +44,9 @@ type CircleConfig struct {
 
 // ServerConfig 服务器配置
 type ServerConfig struct {
-	Port int    `mapstructure:"port"` // 服务端口
-	Mode string `mapstructure:"mode"` // Gin运行模式：debug/release/test
+	Port             int      `mapstructure:"port"`               // 服务端口
+	Mode             string   `mapstructure:"mode"`               // Gin运行模式：debug/release/test
+	CORSAllowOrigins []string `mapstructure:"cors_allow_origins"` // CORS 允许的 Origin，为空时默认 localhost:3000
 }
 
 // MySQLConfig MySQL数据库配置
@@ -44,8 +59,10 @@ type MySQLConfig struct {
 
 // SyncConfig 同步调度配置
 type SyncConfig struct {
-	Cron             string   `mapstructure:"cron"`              // 全局同步Cron表达式
-	EnabledPlatforms []string `mapstructure:"enabled_platforms"` // 启用的平台列表
+	Cron                string   `mapstructure:"cron"`                   // 全局同步Cron表达式
+	EnabledPlatforms    []string `mapstructure:"enabled_platforms"`      // 启用的平台列表
+	OddsSyncIntervalSec int      `mapstructure:"odds_sync_interval_sec"` // 赔率定时同步间隔（秒），如 60
+	OddsSyncEnabled     bool     `mapstructure:"odds_sync_enabled"`      // 是否启用定时赔率同步
 }
 
 // PlatformConfig 单个平台的独立配置
@@ -67,7 +84,7 @@ type PlatformConfig struct {
 	MaxBet         float64  `mapstructure:"max_bet"`          // 最大下注金额
 }
 
-// LoadConfig 加载配置文件（config/config.yaml），敏感项从 .env 覆盖（不提交 git）
+// LoadConfig 加载配置文件（config/config.yaml），敏感项从 .env.local 覆盖（不提交 git）
 func LoadConfig() (*Config, error) {
 	wd, err := os.Getwd()
 	if err != nil {
@@ -144,6 +161,9 @@ func overrideFromEnv(cfg *Config) {
 	}
 	if v := os.Getenv("CIRCLE_BASE_URL"); v != "" {
 		cfg.Circle.BaseURL = v
+	}
+	if v := os.Getenv("CHAIN_EXECUTOR_PRIVATE_KEY"); v != "" {
+		cfg.Chain.ExecutorPrivateKey = v
 	}
 }
 

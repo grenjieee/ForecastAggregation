@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
 	"log"
 	"net/url"
 	"strings"
+	"time"
 
 	_ "github.com/jackc/pgx/v4/stdlib"
 
@@ -15,8 +17,12 @@ import (
 	"ForecastSync/internal/api"
 	"ForecastSync/internal/config"
 	"ForecastSync/internal/interfaces"
+	"ForecastSync/internal/listener"
 	"ForecastSync/internal/model"
+	"ForecastSync/internal/repository"
+	"ForecastSync/internal/service"
 
+	"github.com/gin-contrib/cors"
 	"github.com/gin-contrib/pprof"
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
@@ -124,6 +130,19 @@ func main() {
 	gin.SetMode(cfg.Server.Mode)
 	r := gin.Default()
 
+	// CORS：允许前端跨域请求（开发默认 localhost:3000）
+	origins := cfg.Server.CORSAllowOrigins
+	if len(origins) == 0 {
+		origins = []string{"http://localhost:3000", "http://127.0.0.1:3000"}
+	}
+	r.Use(cors.New(cors.Config{
+		AllowOrigins:     origins,
+		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization"},
+		AllowCredentials: false,
+		MaxAge:           12 * time.Hour,
+	}))
+
 	// 注册ppof 方便调试和监测性能问题
 	pprof.Register(r)
 	logrusLogger.Infof("Gin运行模式: %s", cfg.Server.Mode)
@@ -144,12 +163,51 @@ func main() {
 	}
 	orderHandler := api.NewOrderHandler(db, logrusLogger, tradingAdapters, cfg)
 	r.GET("/api/orders", orderHandler.ListOrders)
+	r.POST("/api/orders/prepare", orderHandler.PrepareOrder)
 	r.POST("/api/orders/place", orderHandler.PlaceOrder)
 	r.GET("/api/orders/:order_uuid", orderHandler.GetOrderDetail)
 	r.GET("/api/orders/:order_uuid/withdraw-info", orderHandler.GetWithdrawInfo)
 	r.POST("/api/orders/:order_uuid/withdraw", orderHandler.RequestWithdraw)
 
-	// 9. 启动服务（从配置读取端口）
+	// 9. 链上事件监听（Escrow FundsLocked → DepositSuccess；Settlement Settled → OnSettlementCompleted）
+	orderSvcForListener := service.NewOrderService(db, logrusLogger, tradingAdapters)
+	contractListener := listener.NewContractListener(orderSvcForListener, cfg, logrusLogger)
+	go func() {
+		if err := contractListener.Start(context.Background()); err != nil {
+			logrusLogger.WithError(err).Warn("ContractListener exited")
+		}
+	}()
+
+	// 10. 定时赔率同步
+	if cfg.Sync.OddsSyncEnabled && cfg.Sync.OddsSyncIntervalSec > 0 {
+		interval := time.Duration(cfg.Sync.OddsSyncIntervalSec) * time.Second
+		eventRepo := repository.NewEventRepositoryInstance(db)
+		marketRepo := repository.NewMarketRepository(db)
+		liveOddsFetchers := make(map[uint64]interfaces.LiveOddsFetcher)
+		if p, ok := cfg.Platforms["polymarket"]; ok {
+			if lf, ok := polymarket.NewPolymarketAdapter(&p, logrusLogger).(interfaces.LiveOddsFetcher); ok {
+				liveOddsFetchers[1] = lf
+			}
+		}
+		if k, ok := cfg.Platforms["kalshi"]; ok {
+			if lf, ok := kalshi.NewKalshiAdapter(&k, logrusLogger).(interfaces.LiveOddsFetcher); ok {
+				liveOddsFetchers[2] = lf
+			}
+		}
+		oddsSync := service.NewOddsSyncService(marketRepo, eventRepo, liveOddsFetchers, logrusLogger)
+		go func() {
+			ticker := time.NewTicker(interval)
+			defer ticker.Stop()
+			for range ticker.C {
+				if err := oddsSync.Run(context.Background(), 500); err != nil {
+					logrusLogger.WithError(err).Warn("OddsSync Run failed")
+				}
+			}
+		}()
+		logrusLogger.Infof("OddsSync 已启动，间隔 %v", interval)
+	}
+
+	// 11. 启动服务
 	port := cfg.Server.Port
 	logrusLogger.Infof("服务启动成功，端口：%d", port)
 	if err := r.Run(fmt.Sprintf(":%d", port)); err != nil {

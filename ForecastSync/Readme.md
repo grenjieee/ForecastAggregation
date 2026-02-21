@@ -1,34 +1,174 @@
-## 代码结构 
+## 整体流程
+
+后端（ForecastSync）与前端、合约、三方平台（Kalshi / Polymarket）的协作顺序为：**用户先在前端选择要下注的赛事与选项** → **再将资金质押到资金托管合约（用户付 Gas）** → 前端向服务端请求时，**服务端实时向三方平台查询赔率**并选出最高者，返回该平台及待签名信息 → **用户签名确认** → 前端请求后端，**后端再调用对应三方平台真实下单** → 结果同步更新订单状态 → 提现时链上结算（Polymarket，用户付 Gas）或后端处理 Kalshi 兑付并转 FeeVault 手续费。
+
+```mermaid
+sequenceDiagram
+  participant User
+  participant Frontend
+  participant Backend
+  participant Chain
+  participant Kalshi
+  participant Polymarket
+
+  Note over User,Polymarket: 阶段一：选赛事（先选盘再入金）
+  User->>Frontend: 1. 选择要下注的赛事、选项
+  Frontend->>Frontend: 2. 展示盘口与赔率
+
+  Note over User,Polymarket: 阶段二：入金（用户付 Gas）
+  User->>Frontend: 3. 发起质押
+  User->>Chain: 4. lockFunds / deposit
+  Chain->>Backend: 5. DepositSuccess event
+  Backend->>Backend: 6. Save contract_order_id
+  Chain-->>Frontend: 7. 返回 order_id（如从 tx receipt 解析）
+
+  Note over User,Polymarket: 阶段三：获取最佳平台与待签名信息（实时查三方赔率）
+  Frontend->>Backend: 8. 获取赔率最高平台、待签名信息
+  Backend->>Kalshi: 9. 实时查询当前赔率
+  Backend->>Polymarket: 10. 实时查询当前赔率
+  Kalshi-->>Backend: 11. 赔率
+  Polymarket-->>Backend: 12. 赔率
+  Backend->>Backend: 13. pickBestOdds 选最高
+  Backend->>Frontend: 14. 最佳平台、锁定赔率、待签名 payload
+
+  Note over User,Polymarket: 阶段四：用户签名后，后端真实下单
+  User->>Frontend: 15. 签名确认
+  Frontend->>Backend: 16. POST /orders/place（含签名或 contract_order_id）
+  Backend->>Kalshi: 17. Or PlaceOrder (Kalshi)
+  Backend->>Polymarket: 17. Or PlaceOrder (CLOB)
+  Backend->>Frontend: 18. order_uuid, status
+
+  Note over User,Polymarket: 阶段五：Result sync
+  Backend->>Kalshi: 19. FetchEventResult (poll)
+  Backend->>Polymarket: 20. FetchEventResult or chain events
+  Backend->>Backend: 21. Update event result, order settlable/settled
+
+  Note over User,Polymarket: 阶段六：Withdraw
+  alt Chain (Polymarket)
+    User->>Frontend: 22. Withdraw
+    Frontend->>Backend: 23. GET withdraw-info
+    Backend->>Frontend: 24. contract, method, params
+    User->>Chain: 25. claim / withdraw (user pays gas)
+    Chain->>User: 26. payout - fee
+    Chain->>FeeVault: 27. fee
+  else Kalshi
+    User->>Frontend: 22. Withdraw
+    Frontend->>Backend: 23. POST withdraw
+    Backend->>Backend: 24. Circle USD->USDC, compute fee
+    Backend->>Chain: 25. transfer user (payout-fee), FeeVault (fee)
+    Backend->>Frontend: 26. withdrawn
+  end
+```
+
+---
+
+## 整体代码架构
+
+采用分层结构：**API → Service → Repository / Adapter**；链上事件由 Listener 对接，多平台事件同步与下单由各平台 Adapter 实现。
+
+```mermaid
+flowchart TB
+  subgraph api [API 层]
+    SyncHandler[SyncHandler]
+    MarketHandler[MarketHandler]
+    OrderHandler[OrderHandler]
+  end
+  subgraph service [Service 层]
+    SyncService[sync]
+    Aggregation[aggregation]
+    MarketService[market]
+    OrderService[order]
+    ResultSync[result_sync]
+    FiatService[fiat]
+  end
+  subgraph data [数据与外部]
+    EventRepo[event_repo]
+    MarketRepo[market_repo]
+    OrderRepo[order_repo]
+    CanonicalRepo[canonical_repo]
+    Adapter[Kalshi/Polymarket Adapter]
+    Listener[listener 链上]
+  end
+  SyncHandler --> SyncService
+  SyncService --> Adapter
+  SyncService --> EventRepo
+  MarketHandler --> MarketService
+  MarketService --> MarketRepo
+  MarketService --> CanonicalRepo
+  OrderHandler --> OrderService
+  OrderService --> OrderRepo
+  OrderService --> Adapter
+  ResultSync --> Adapter
+  ResultSync --> OrderRepo
+  FiatService --> OrderRepo
+  Listener -.-> OrderService
+```
+
 ```text
 ForecastSync/
 ├── cmd/
-│   └── server/
-│       └── main.go          # 入口文件（启动API服务）
+│   └── main.go                 # 入口：加载配置、初始化 DB/Gin、注册路由与 listener
+├── config/
+│   └── config.yaml             # 服务/数据库/各平台等配置
 ├── internal/
-│   ├── adapter/             # 平台适配器层（每个平台一个目录）
-│   │   ├── polymarket/      # Polymarket适配器
-│   │   │   ├── adapter.go   # Polymarket适配器实现
-│   │   └── kalshi/          # Kalshi适配器
-│   │       ├── adapter.go   # Kalshi适配器实现
-│   ├── config/              # 配置管理
-│   │   └── config.go        # 全局配置
-│   ├── interfaces/          # 通用接口定义
-│   │   └── platform_adapter.go  # 平台适配器通用接口
-│   ├── model/               # 数据库模型 + 通用数据结构
-│   │   ├── db.go            # 数据库表模型（Event/EventOdds等）
-│   │   └── platform.go      # 通用平台数据结构
-│   ├── repository/          # 通用数据库操作
-│   │   └── event_repo.go    # Event/EventOdds入库逻辑
-│   ├── service/             # 通用同步服务
-│   │   └── sync.go          # 多平台同步核心逻辑
-│   └── api/                 # API接口层
-│       └── sync_handler.go  # 同步接口
-│   └── utils/               # API接口层
-│       └── httpclient       # 统一封装http请求工具类
-│   │       ├── adapter.go   # http工具类实现
+│   ├── adapter/                 # 平台适配器（实现 interfaces 中的同步与交易接口）
+│   │   ├── kalshi/
+│   │   │   ├── adapter.go       # 事件拉取、转换、结果查询
+│   │   │   ├── auth.go         # Kalshi 认证
+│   │   │   └── trading.go      # 下单实现 TradingAdapter
+│   │   └── polymarket/
+│   │       ├── adapter.go      # 事件拉取、转换、结果查询
+│   │       └── trading.go      # CLOB 下单实现 TradingAdapter
+│   ├── api/                    # HTTP 接口层
+│   │   ├── sync_handler.go     # 同步触发
+│   │   ├── market_handler.go   # 市场/事件查询
+│   │   └── order_handler.go    # 订单列表、下单、提现信息与提现
+│   ├── circle/                 # Circle 支付相关（如 Kalshi 兑付）
+│   │   └── client.go
+│   ├── config/
+│   │   └── config.go           # 配置加载与结构体
+│   ├── interfaces/             # 通用接口
+│   │   ├── platform_adapter.go # 平台同步接口（含 EventsStreamer/EventResultFetcher）
+│   │   └── trading.go          # 下单接口 TradingAdapter
+│   ├── listener/               # 链上事件监听（如入金）
+│   │   └── contract.go
+│   ├── model/                  # 数据库模型与通用数据结构
+│   │   ├── db.go               # Event/EventOdds/User/Platform 等表模型
+│   │   ├── order.go            # 订单模型
+│   │   ├── canonical.go        # 规范事件与平台关联
+│   │   ├── platform.go         # 平台侧原始数据结构
+│   │   ├── kalshi.go           # Kalshi 专用结构
+│   │   └── common.go           # 通用类型
+│   ├── repository/             # 数据访问
+│   │   ├── event_repo.go       # 事件/赔率入库
+│   │   ├── market_repo.go      # 市场查询
+│   │   ├── order_repo.go       # 订单 CRUD
+│   │   └── canonical_repo.go   # 规范事件与关联
+│   ├── service/                # 业务逻辑
+│   │   ├── sync.go             # 多平台同步
+│   │   ├── aggregation.go      # 赔率聚合/选平台
+│   │   ├── market.go           # 市场查询服务
+│   │   ├── order.go            # 下单、提现等订单流程
+│   │   ├── result_sync.go      # 结果同步与订单结算状态
+│   │   └── fiat.go             # 法币/兑付相关
+│   └── utils/
+│       └── httpclient/
+│           └── client.go        # HTTP 客户端封装
 ├── go.mod
 └── go.sum
 ```
+
+## API 与前端集成
+
+- **GET /api/markets**：市场列表（分页，支持 `status`、`type`、`page`、`page_size`）。
+- **GET /api/markets/:event_uuid**：市场详情与多平台赔率。
+- **POST /api/orders/place**：下单，请求体 `contract_order_id`、`event_uuid`、`bet_option`（及可选 `amount`）；下单时使用实时赔率选平台，不向前端暴露平台名。
+- **GET /api/orders**：订单列表，查询参数 `wallet` 必填，可选 `status`、`page`、`page_size`。
+- **GET /api/orders/:order_uuid**：订单详情。
+- **GET /api/orders/:order_uuid/withdraw-info**：提现参数；Kalshi 订单返回 `type=kalshi` 与 `fee`/`user_amount`，链上订单返回 `contract_address` 与 `method` 供用户签名。
+- **POST /api/orders/:order_uuid/withdraw**：发起提现；Kalshi 由后端处理并更新为 `withdrawn`，链上由前端拿到 withdraw-info 后用户签名。
+
+前端需配置 **NEXT_PUBLIC_API_URL**（如 `http://localhost:8081`）指向本服务。链与合约地址在 `config/config.yaml` 的 `chain` 下配置（`rpc_url`、`ws_url`、`escrow_address`、`settlement_address`、`fee_vault_address`）。
 
 ## 库表结构
 
@@ -410,8 +550,8 @@ CREATE TRIGGER update_canonical_events_updated_at BEFORE UPDATE ON canonical_eve
 
 - 1. 配置敏感信息（不提交 git）：复制 `.env.example` 为 `.env`，填入真实值
 ```bash
-cp .env.example .env
-# 编辑 .env 填写：
+cp .env.local.example .env.local
+# 编辑 .env.local 填写：
 # - KALSHI_AUTH_KEY、KALSHI_AUTH_SECRET（Kalshi 下单）
 # - POLYMARKET_AUTH_KEY、POLYMARKET_AUTH_SECRET、POLYMARKET_AUTH_TOKEN、POLYMARKET_AUTH_PRIVATE_KEY（Polymarket 下单）
 # - MYSQL_DSN（可选，覆盖数据库连接）
@@ -422,7 +562,7 @@ cp .env.example .env
 ```yaml
 # 数据库配置
 mysql:
-  # 使用 postgres，请修改成自己环境下 postgres 的配置；也可通过 .env 的 MYSQL_DSN 覆盖
+  # 使用 postgres，请修改成自己环境下 postgres 的配置；也可通过 .env.local 的 MYSQL_DSN 覆盖
   dsn: "postgres://postgres:postgres@127.0.0.1:5433/forecast_aggregation?sslmode=disable&TimeZone=Asia/Shanghai"
 
 # 各平台独立配置
@@ -434,7 +574,7 @@ platforms:
     protocol: "rest"
     timeout: 10
     retry_count: 2
-    # auth_key、auth_secret、auth_token、auth_private_key 从 .env 读取，此处留空
+    # auth_key、auth_secret、auth_token、auth_private_key 从 .env.local 读取，此处留空
     auth_token: ""
     auth_key: ""
     auth_secret: ""
@@ -452,7 +592,7 @@ platforms:
     retry_count: 3
     series_ticker: ""
     series_tickers: []   # 例: ["NFL","NBA"] 精准拉取体育
-    # auth_key、auth_secret 从 .env 读取（KALSHI_AUTH_KEY、KALSHI_AUTH_SECRET），此处留空
+    # auth_key、auth_secret 从 .env.local 读取（KALSHI_AUTH_KEY、KALSHI_AUTH_SECRET），此处留空
     auth_key: ""
     auth_secret: ""
     proxy: "http://127.0.0.1:7890"

@@ -2,6 +2,8 @@
 server:
   port: 8081
   mode: debug
+  # CORS 允许的前端 Origin（可选；不配置时默认 http://localhost:3000, http://127.0.0.1:3000）
+  cors_allow_origins: ["http://localhost:3000", "http://127.0.0.1:3000"]
 
 # 数据库配置
 mysql:
@@ -17,10 +19,23 @@ circle:
   timeout: 30
   proxy: "http://127.0.0.1:7890"
 
+# 链与合约（监听入金/结算、提现 FeeVault）
+# Executor 私钥从环境变量 CHAIN_EXECUTOR_PRIVATE_KEY 读取，用于 submit-intent 调用 executeBetIntent
+chain:
+  chain_id: 84532
+  rpc_url: "https://sepolia.base.org"
+  ws_url: "wss://base-sepolia-rpc.publicnode.com"
+  escrow_address: "0x84477D371368565f8775a0be5a0347Ef40d83738"
+  bet_router_address: "0x288935133A04D3A4d1B9aa294039cD40a239844E"
+  settlement_address: "0x159CdB544990C284e3Ea2D1557cf70d6DD559209"
+  fee_vault_address: "0xC6855a60845D0F0b0c228B00310A483d6Fe0062e"
+
 # 同步配置（支持多平台独立调度）
 sync:
   cron: "0 */1 * * *"  # 全局同步周期
   enabled_platforms: ["polymarket", "kalshi"]  # 启用的平台（当前仅对接这两个）
+  odds_sync_interval_sec: 60  # 赔率定时同步间隔（秒），仅对仍在交易中的事件
+  odds_sync_enabled: true     # 是否启用定时赔率同步
 
 # 各平台独立配置
 platforms:
@@ -31,7 +46,7 @@ platforms:
     protocol: "rest"
     timeout: 10
     retry_count: 2
-    # 敏感信息从 .env 读取（POLYMARKET_AUTH_KEY、POLYMARKET_AUTH_SECRET、POLYMARKET_AUTH_TOKEN、POLYMARKET_AUTH_PRIVATE_KEY），此处留空
+    # 敏感信息从 .env.local 读取（POLYMARKET_AUTH_KEY、POLYMARKET_AUTH_SECRET、POLYMARKET_AUTH_TOKEN、POLYMARKET_AUTH_PRIVATE_KEY），此处留空
     auth_token: ""
     auth_key: ""
     auth_secret: ""
@@ -53,7 +68,7 @@ platforms:
     protocol: "rest"
     timeout: 60 # 超时（秒）；走代理或拉取 with_nested_markets 时响应较慢，建议 30~60
     retry_count: 3 # 重试次数
-    # 敏感信息从 .env 读取（KALSHI_AUTH_KEY, KALSHI_AUTH_SECRET），不提交 git
+    # 敏感信息从 .env.local 读取（KALSHI_AUTH_KEY, KALSHI_AUTH_SECRET），不提交 git
     auth_key: ""
     auth_secret: ""
     #代理地址

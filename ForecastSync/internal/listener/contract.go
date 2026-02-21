@@ -3,22 +3,25 @@ package listener
 import (
 	"context"
 
+	"ForecastSync/internal/config"
 	"ForecastSync/internal/service"
 
+	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/sirupsen/logrus"
 )
 
-// ContractListener 订阅链上下单事件并调用 OrderService.CreateOrderFromChainEvent。
-// 实际实现需使用 go-ethereum 订阅合约 BetPlaced 事件，解析 user、event 标识、方向、金额、tx_hash 后构造 ChainBetEvent 并调用 OnBetPlaced。
+// ContractListener 订阅链上入金/结算事件并调用 OrderService
 type ContractListener struct {
 	orderService *service.OrderService
+	cfg          *config.Config
 	logger       *logrus.Logger
 }
 
 // NewContractListener 创建合约事件监听器
-func NewContractListener(orderService *service.OrderService, logger *logrus.Logger) *ContractListener {
+func NewContractListener(orderService *service.OrderService, cfg *config.Config, logger *logrus.Logger) *ContractListener {
 	return &ContractListener{
 		orderService: orderService,
+		cfg:          cfg,
 		logger:       logger,
 	}
 }
@@ -57,9 +60,20 @@ func (l *ContractListener) OnSettlementCompleted(ctx context.Context, orderUUID,
 	return l.orderService.OnSettlementCompleted(ctx, orderUUID, txHash, settlementAmount, manageFee, gasFee)
 }
 
-// Start 启动监听（stub：实际应在此处订阅链上事件并循环调用 OnBetPlaced / OnSettlementCompleted）
+// Start 启动监听：若配置了 chain.ws_url 与合约地址则用 go-ethereum 订阅 FundsLocked / Settled
 func (l *ContractListener) Start(ctx context.Context) error {
-	l.logger.Info("ContractListener started (stub: no chain subscription)")
-	<-ctx.Done()
-	return nil
+	if l.cfg == nil || l.cfg.Chain.WSURL == "" || l.cfg.Chain.EscrowAddress == "" {
+		l.logger.Info("ContractListener started (no chain config, skipping subscription)")
+		<-ctx.Done()
+		return nil
+	}
+	client, err := ethclient.Dial(l.cfg.Chain.WSURL)
+	if err != nil {
+		l.logger.WithError(err).Error("ContractListener ethclient.Dial failed")
+		return err
+	}
+	defer client.Close()
+	sub := NewChainSubscriber(&l.cfg.Chain, client, l, l.logger)
+	l.logger.Info("ContractListener started (subscribed to Escrow/Settlement)")
+	return sub.Run(ctx)
 }

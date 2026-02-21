@@ -120,14 +120,16 @@ func (s *MarketService) ListMarkets(ctx context.Context, filter repository.Marke
 		}
 
 		platformSet := make(map[uint64]struct{})
-		var totalVolume float64
+		platVolume := make(map[uint64]float64) // platformID -> 该平台交易量（每平台取一条，避免 YES/NO 双行重复计）
 		var bestPrice, minPrice, maxPrice float64
 		var bestPlatID uint64
 		firstPrice := true
 		platOdds := make(map[uint64]map[string]float64) // platformID -> optionName -> price
 		for _, o := range odds {
 			platformSet[o.PlatformID] = struct{}{}
-			totalVolume += o.Volume
+			if o.Volume > platVolume[o.PlatformID] {
+				platVolume[o.PlatformID] = o.Volume
+			}
 			if firstPrice {
 				minPrice, maxPrice = o.Price, o.Price
 				firstPrice = false
@@ -176,10 +178,15 @@ func (s *MarketService) ListMarkets(ctx context.Context, filter repository.Marke
 			}
 		}
 
-		// save_pct: 最优价 vs 最差价的节省比例，(max-min)/max*100
+		// save_pct: 两平台赔率涨幅，(最高价-最低价)/最低价*100；单平台或无价差时为 0
 		savePct := 0.0
-		if maxPrice > 0 && maxPrice > minPrice {
-			savePct = (maxPrice - minPrice) / maxPrice * 100
+		if len(platformSet) >= 2 && minPrice > 0 && maxPrice > minPrice {
+			savePct = (maxPrice - minPrice) / minPrice * 100
+		}
+
+		var totalVolume float64
+		for _, v := range platVolume {
+			totalVolume += v
 		}
 
 		// description: 有主客队则生成，否则用 title
@@ -306,12 +313,15 @@ func (s *MarketService) GetMarketDetailByCanonicalID(ctx context.Context, canoni
 	detail.Event.EndTime = ce.MatchTime.UnixMilli()
 
 	platformSet := make(map[uint64]struct{})
-	var bestPrice, minPrice, maxPrice, totalVolume float64
+	platVolume := make(map[uint64]float64)
+	var bestPrice, minPrice, maxPrice float64
 	var bestPlatName, bestOptName string
 
 	for i, o := range odds {
-		totalVolume += o.Volume
 		platformSet[o.PlatformID] = struct{}{}
+		if o.Volume > platVolume[o.PlatformID] {
+			platVolume[o.PlatformID] = o.Volume
+		}
 		po := PlatformOption{
 			PlatformID:   o.PlatformID,
 			PlatformName: platNameByID[o.PlatformID],
@@ -337,6 +347,10 @@ func (s *MarketService) GetMarketDetailByCanonicalID(ctx context.Context, canoni
 		}
 	}
 
+	var totalVolume float64
+	for _, v := range platVolume {
+		totalVolume += v
+	}
 	detail.Analytics.BestPrice = bestPrice
 	detail.Analytics.BestPricePlat = bestPlatName
 	detail.Analytics.BestPriceOpt = bestOptName

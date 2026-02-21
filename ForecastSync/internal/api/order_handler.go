@@ -4,9 +4,12 @@ import (
 	"net/http"
 	"strconv"
 
+	"ForecastSync/internal/adapter/kalshi"
+	"ForecastSync/internal/adapter/polymarket"
 	"ForecastSync/internal/circle"
 	"ForecastSync/internal/config"
 	"ForecastSync/internal/interfaces"
+	"ForecastSync/internal/repository"
 	"ForecastSync/internal/service"
 
 	"github.com/gin-gonic/gin"
@@ -15,7 +18,7 @@ import (
 )
 
 // NewOrderHandler 创建 OrderHandler。adapters 为 nil 时仅支持查询，PlaceOrder 会报错
-// cfg 用于构建 Circle 兑换服务（Kalshi 下单前链资产转 USD）
+// cfg 用于构建 Circle 兑换服务（Kalshi 下单前链资产转 USD）及实时赔率拉取适配器
 func NewOrderHandler(db *gorm.DB, logger *logrus.Logger, adapters map[uint64]interfaces.TradingAdapter, cfg *config.Config) *OrderHandler {
 	var fiat service.FiatConversionService
 	if cfg != nil && cfg.Circle.APIKey != "" && cfg.Circle.BaseURL != "" {
@@ -31,9 +34,24 @@ func NewOrderHandler(db *gorm.DB, logger *logrus.Logger, adapters map[uint64]int
 		fiat = service.NewNoopFiatConversion()
 		logger.Info("OrderHandler 使用占位兑换（未配置 Circle API Key）")
 	}
-	svc := service.NewOrderServiceWithDeps(db, logger, adapters, fiat)
+	eventRepo := repository.NewEventRepositoryInstance(db)
+	liveOddsFetchers := make(map[uint64]interfaces.LiveOddsFetcher)
+	if cfg != nil {
+		if p, ok := cfg.Platforms["polymarket"]; ok {
+			if lf, ok := polymarket.NewPolymarketAdapter(&p, logger).(interfaces.LiveOddsFetcher); ok {
+				liveOddsFetchers[1] = lf
+			}
+		}
+		if k, ok := cfg.Platforms["kalshi"]; ok {
+			if lf, ok := kalshi.NewKalshiAdapter(&k, logger).(interfaces.LiveOddsFetcher); ok {
+				liveOddsFetchers[2] = lf
+			}
+		}
+	}
+	svc := service.NewOrderServiceWithDeps(db, logger, adapters, fiat, eventRepo, liveOddsFetchers)
 	return &OrderHandler{
 		orderService: svc,
+		cfg:          cfg,
 		logger:       logger,
 	}
 }
@@ -41,6 +59,7 @@ func NewOrderHandler(db *gorm.DB, logger *logrus.Logger, adapters map[uint64]int
 // OrderHandler 订单查询与下单接口
 type OrderHandler struct {
 	orderService *service.OrderService
+	cfg          *config.Config
 	logger       *logrus.Logger
 }
 
@@ -113,7 +132,23 @@ func (h *OrderHandler) RequestWithdraw(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "提现请求已记录"})
 }
 
-// PlaceOrder 下单接口 POST /api/orders/place
+// PrepareOrder 获取待签名信息（实时查三方赔率，返回最高赔率与待签名消息）POST /api/orders/prepare
+func (h *OrderHandler) PrepareOrder(c *gin.Context) {
+	var req service.PrepareOrderRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request: " + err.Error()})
+		return
+	}
+	result, err := h.orderService.PrepareOrderFromFrontend(c.Request.Context(), &req)
+	if err != nil {
+		h.logger.WithError(err).Error("PrepareOrder failed")
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
+// PlaceOrder 下单接口 POST /api/orders/place（可选带 message_to_sign + signature，校验通过后才真实下单）
 func (h *OrderHandler) PlaceOrder(c *gin.Context) {
 	var req service.PlaceOrderRequest
 	if err := c.ShouldBindJSON(&req); err != nil {

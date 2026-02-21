@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"ForecastSync/internal/model"
 	"ForecastSync/internal/repository"
 
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 	"gorm.io/gorm"
@@ -47,35 +49,39 @@ type ChainBetEvent struct {
 
 // OrderService 负责从链上事件生成聚合订单
 type OrderService struct {
-	db              *gorm.DB
-	logger          *logrus.Logger
-	marketRepo      repository.MarketRepository
-	canonicalRepo   repository.CanonicalRepository
-	orderRepo       repository.OrderRepository
-	contractEvents  repository.ContractEventRepository
-	tradingAdapters map[uint64]interfaces.TradingAdapter // platformID -> adapter，可为 nil
-	fiatConversion  FiatConversionService                // Kalshi 下单前 USDC->USD，可为 nil 则用占位
+	db               *gorm.DB
+	logger           *logrus.Logger
+	marketRepo       repository.MarketRepository
+	canonicalRepo    repository.CanonicalRepository
+	orderRepo        repository.OrderRepository
+	contractEvents   repository.ContractEventRepository
+	eventRepo        *repository.EventRepository
+	tradingAdapters  map[uint64]interfaces.TradingAdapter  // platformID -> adapter，可为 nil
+	liveOddsFetchers map[uint64]interfaces.LiveOddsFetcher // platformID -> 实时赔率拉取，可为 nil 则用 DB 赔率
+	fiatConversion   FiatConversionService                 // Kalshi 下单前 USDC->USD，可为 nil 则用占位
 }
 
 // NewOrderService 创建 OrderService。tradingAdapters 可为 nil，则不调用真实下单
 func NewOrderService(db *gorm.DB, logger *logrus.Logger, tradingAdapters map[uint64]interfaces.TradingAdapter) *OrderService {
-	return NewOrderServiceWithDeps(db, logger, tradingAdapters, nil)
+	return NewOrderServiceWithDeps(db, logger, tradingAdapters, nil, nil, nil)
 }
 
-// NewOrderServiceWithDeps 创建 OrderService，支持注入 FiatConversion
-func NewOrderServiceWithDeps(db *gorm.DB, logger *logrus.Logger, tradingAdapters map[uint64]interfaces.TradingAdapter, fiat FiatConversionService) *OrderService {
+// NewOrderServiceWithDeps 创建 OrderService，支持注入 FiatConversion、EventRepo、LiveOddsFetchers
+func NewOrderServiceWithDeps(db *gorm.DB, logger *logrus.Logger, tradingAdapters map[uint64]interfaces.TradingAdapter, fiat FiatConversionService, eventRepo *repository.EventRepository, liveOddsFetchers map[uint64]interfaces.LiveOddsFetcher) *OrderService {
 	if fiat == nil {
 		fiat = NewNoopFiatConversion()
 	}
 	return &OrderService{
-		db:              db,
-		logger:          logger,
-		marketRepo:      repository.NewMarketRepository(db),
-		canonicalRepo:   repository.NewCanonicalRepository(db),
-		orderRepo:       repository.NewOrderRepository(db),
-		contractEvents:  repository.NewContractEventRepository(db),
-		tradingAdapters: tradingAdapters,
-		fiatConversion:  fiat,
+		db:               db,
+		logger:           logger,
+		marketRepo:       repository.NewMarketRepository(db),
+		canonicalRepo:    repository.NewCanonicalRepository(db),
+		orderRepo:        repository.NewOrderRepository(db),
+		contractEvents:   repository.NewContractEventRepository(db),
+		eventRepo:        eventRepo,
+		tradingAdapters:  tradingAdapters,
+		liveOddsFetchers: liveOddsFetchers,
+		fiatConversion:   fiat,
 	}
 }
 
@@ -273,6 +279,9 @@ type PlaceOrderRequest struct {
 	EventUUID       string  `json:"event_uuid"`        // 本系统赛事 event_uuid 或 canonical_id
 	BetOption       string  `json:"bet_option"`        // YES/NO
 	Amount          float64 `json:"amount,omitempty"`  // 可选，用于与合约事件金额校验
+	// 用户签名后下单：Prepare 返回的待签名消息 + 前端 personal_sign 结果
+	MessageToSign string `json:"message_to_sign,omitempty"`
+	Signature     string `json:"signature,omitempty"`
 }
 
 // PlaceOrderResult 下单结果
@@ -281,6 +290,177 @@ type PlaceOrderResult struct {
 	PlatformOrderID string `json:"platform_order_id"`
 	PlatformID      uint64 `json:"platform_id"`
 	Status          string `json:"status"`
+}
+
+// PrepareOrderRequest 获取待签名信息请求（与 Place 参数一致，用于先查赔率再签名再下单）
+type PrepareOrderRequest struct {
+	ContractOrderID string `json:"contract_order_id"`
+	EventUUID       string `json:"event_uuid"`
+	BetOption       string `json:"bet_option"`
+}
+
+// PrepareOrderResult 返回实时最佳赔率与待签名消息
+type PrepareOrderResult struct {
+	LockedOdds    float64 `json:"locked_odds"`     // 当前实时最高赔率
+	MessageToSign string  `json:"message_to_sign"` // 用户需 personal_sign 的消息
+	ExpiresAtSec  int64   `json:"expires_at_sec"`  // 过期时间戳（秒）
+}
+
+const prepareOrderExpirySec = 300 // 5 分钟
+
+// PrepareOrderFromFrontend 前端调用：实时查三方赔率，返回最高赔率与待签名消息（签名后再调 PlaceOrder）
+func (s *OrderService) PrepareOrderFromFrontend(ctx context.Context, req *PrepareOrderRequest) (*PrepareOrderResult, error) {
+	if req == nil || req.ContractOrderID == "" || req.EventUUID == "" || req.BetOption == "" {
+		return nil, fmt.Errorf("contract_order_id, event_uuid, bet_option 必填")
+	}
+	_, err := s.contractEvents.GetUnprocessedByContractOrderID(ctx, req.ContractOrderID)
+	if err != nil {
+		return nil, fmt.Errorf("未找到未处理的入账事件 contract_order_id=%s: %w", req.ContractOrderID, err)
+	}
+	event, eventIDs, links, err := s.resolveEventAndLinks(ctx, req.EventUUID)
+	if err != nil {
+		return nil, err
+	}
+	odds, fetchedPerLink, err := s.fetchLiveOddsForEvent(ctx, event, eventIDs, links)
+	if err != nil {
+		return nil, err
+	}
+	_, bestPrice, _, err := pickBestOdds(odds, req.BetOption)
+	if err != nil {
+		return nil, err
+	}
+	_ = fetchedPerLink // 仅 Prepare 不需要写回
+	expiresAt := time.Now().Unix() + prepareOrderExpirySec
+	msg := fmt.Sprintf("PlaceOrder:%s:%s:%s:%.6f:%d", req.ContractOrderID, req.EventUUID, req.BetOption, bestPrice, expiresAt)
+	return &PrepareOrderResult{
+		LockedOdds:    bestPrice,
+		MessageToSign: msg,
+		ExpiresAtSec:  expiresAt,
+	}, nil
+}
+
+// resolveEventAndLinks 根据 event_uuid 解析出 event、eventIDs、links
+func (s *OrderService) resolveEventAndLinks(ctx context.Context, eventUUID string) (*model.Event, []uint64, []*model.EventPlatformLink, error) {
+	event, err := s.marketRepo.GetEventByUUID(ctx, eventUUID)
+	if err != nil {
+		if id, parseErr := strconv.ParseUint(eventUUID, 10, 64); parseErr == nil {
+			links, linkErr := s.canonicalRepo.ListLinksByCanonicalID(ctx, id)
+			if linkErr != nil || len(links) == 0 {
+				return nil, nil, nil, fmt.Errorf("event_uuid 或 canonical_id 无效: %w", err)
+			}
+			event, err = s.marketRepo.GetEventByID(ctx, links[0].EventID)
+			if err != nil {
+				return nil, nil, nil, fmt.Errorf("查询事件失败: %w", err)
+			}
+		} else {
+			return nil, nil, nil, fmt.Errorf("查询事件失败 event_uuid=%s: %w", eventUUID, err)
+		}
+	}
+	var eventIDs []uint64
+	var links []*model.EventPlatformLink
+	canonicalID, err := s.canonicalRepo.GetCanonicalIDByEventID(ctx, event.ID)
+	if err == nil {
+		links, _ = s.canonicalRepo.ListLinksByCanonicalID(ctx, canonicalID)
+		for _, l := range links {
+			eventIDs = append(eventIDs, l.EventID)
+		}
+	}
+	if len(eventIDs) == 0 {
+		eventIDs = []uint64{event.ID}
+	}
+	return event, eventIDs, links, nil
+}
+
+// linkOdds 用于 fetchLiveOddsForEvent
+type linkOdds struct {
+	eventID         uint64
+	platformID      uint64
+	platformEventID string
+	rows            []interfaces.LiveOddsRow
+}
+
+// fetchLiveOddsForEvent 拉取该赛事在多平台的实时赔率
+func (s *OrderService) fetchLiveOddsForEvent(ctx context.Context, event *model.Event, eventIDs []uint64, links []*model.EventPlatformLink) ([]*model.EventOdds, []linkOdds, error) {
+	var fetchedPerLink []linkOdds
+	var odds []*model.EventOdds
+	if s.liveOddsFetchers != nil {
+		if len(links) > 0 {
+			for _, l := range links {
+				ev, _ := s.marketRepo.GetEventByID(ctx, l.EventID)
+				if ev == nil {
+					continue
+				}
+				fetcher := s.liveOddsFetchers[l.PlatformID]
+				if fetcher == nil {
+					continue
+				}
+				rows, err := fetcher.FetchLiveOdds(ctx, l.PlatformID, ev.PlatformEventID)
+				if err != nil {
+					s.logger.WithError(err).WithFields(logrus.Fields{"platform_id": l.PlatformID, "platform_event_id": ev.PlatformEventID}).Warn("拉取实时赔率失败，跳过该平台")
+					continue
+				}
+				fetchedPerLink = append(fetchedPerLink, linkOdds{eventID: l.EventID, platformID: l.PlatformID, platformEventID: ev.PlatformEventID, rows: rows})
+				for _, r := range rows {
+					odds = append(odds, &model.EventOdds{PlatformID: r.PlatformID, OptionName: r.OptionName, Price: r.Price})
+				}
+			}
+		} else {
+			fetcher := s.liveOddsFetchers[event.PlatformID]
+			if fetcher != nil {
+				rows, err := fetcher.FetchLiveOdds(ctx, event.PlatformID, event.PlatformEventID)
+				if err == nil {
+					fetchedPerLink = append(fetchedPerLink, linkOdds{eventID: event.ID, platformID: event.PlatformID, platformEventID: event.PlatformEventID, rows: rows})
+					for _, r := range rows {
+						odds = append(odds, &model.EventOdds{PlatformID: r.PlatformID, OptionName: r.OptionName, Price: r.Price})
+					}
+				}
+			}
+		}
+	}
+	if len(odds) == 0 {
+		var err error
+		odds, err = s.marketRepo.GetOddsByEventIDs(ctx, eventIDs)
+		if err != nil {
+			return nil, nil, fmt.Errorf("查询赔率失败: %w", err)
+		}
+	}
+	if len(odds) == 0 {
+		return nil, nil, fmt.Errorf("该赛事暂无可用赔率")
+	}
+	return odds, fetchedPerLink, nil
+}
+
+// verifyOrderSignature 校验 personal_sign(messageToSign) 的签名者是否为 userWallet
+func verifyOrderSignature(userWallet, messageToSign, signatureHex string) error {
+	if userWallet == "" || messageToSign == "" || signatureHex == "" {
+		return fmt.Errorf("user_wallet, message_to_sign, signature 必填")
+	}
+	sig, err := hex.DecodeString(strings.TrimPrefix(signatureHex, "0x"))
+	if err != nil || len(sig) < 65 {
+		return fmt.Errorf("invalid signature hex")
+	}
+	hash := crypto.Keccak256Hash([]byte("\x19Ethereum Signed Message:\n" + strconv.Itoa(len(messageToSign)) + messageToSign))
+	pubKey, err := crypto.SigToPub(hash.Bytes(), sig)
+	if err != nil {
+		return fmt.Errorf("signature recovery failed: %w", err)
+	}
+	recovered := crypto.PubkeyToAddress(*pubKey).Hex()
+	if !strings.EqualFold(recovered, userWallet) {
+		return fmt.Errorf("签名者与入账钱包不一致: %s vs %s", recovered, userWallet)
+	}
+	// 解析 message 中的过期时间 PlaceOrder:...:...:...:...:expires_at
+	parts := strings.Split(messageToSign, ":")
+	if len(parts) < 6 {
+		return fmt.Errorf("message_to_sign 格式无效")
+	}
+	expiresAt, err := strconv.ParseInt(parts[len(parts)-1], 10, 64)
+	if err != nil {
+		return fmt.Errorf("message_to_sign 过期时间无效: %w", err)
+	}
+	if time.Now().Unix() > expiresAt {
+		return fmt.Errorf("待签名消息已过期")
+	}
+	return nil
 }
 
 // PlaceOrderFromFrontend 前端调用：校验 contract_order_id 对应入账事件，选平台，Kalshi 时调 Circle 占位，下单并落库
@@ -293,6 +473,13 @@ func (s *OrderService) PlaceOrderFromFrontend(ctx context.Context, req *PlaceOrd
 	ce, err := s.contractEvents.GetUnprocessedByContractOrderID(ctx, req.ContractOrderID)
 	if err != nil {
 		return nil, fmt.Errorf("未找到未处理的入账事件 contract_order_id=%s: %w", req.ContractOrderID, err)
+	}
+
+	// 若前端带了签名，先校验再继续（用户签名后后端才真实下单）
+	if req.Signature != "" {
+		if err := verifyOrderSignature(ce.UserWallet, req.MessageToSign, req.Signature); err != nil {
+			return nil, fmt.Errorf("签名校验失败: %w", err)
+		}
 	}
 
 	amount := 0.0
@@ -314,43 +501,14 @@ func (s *OrderService) PlaceOrderFromFrontend(ctx context.Context, req *PlaceOrd
 		fundCurrency = *ce.FundCurrency
 	}
 
-	// 2. 根据 event_uuid 查 event，再查 canonical 下所有 event 的 odds
-	event, err := s.marketRepo.GetEventByUUID(ctx, req.EventUUID)
+	// 2. 解析 event 与 links，并实时拉取赔率
+	event, eventIDs, links, err := s.resolveEventAndLinks(ctx, req.EventUUID)
 	if err != nil {
-		// 尝试按 canonical_id（数字）解析
-		if id, parseErr := strconv.ParseUint(req.EventUUID, 10, 64); parseErr == nil {
-			links, linkErr := s.canonicalRepo.ListLinksByCanonicalID(ctx, id)
-			if linkErr != nil || len(links) == 0 {
-				return nil, fmt.Errorf("event_uuid 或 canonical_id 无效: %w", err)
-			}
-			event, err = s.marketRepo.GetEventByID(ctx, links[0].EventID)
-			if err != nil {
-				return nil, fmt.Errorf("查询事件失败: %w", err)
-			}
-		} else {
-			return nil, fmt.Errorf("查询事件失败 event_uuid=%s: %w", req.EventUUID, err)
-		}
+		return nil, err
 	}
-
-	var eventIDs []uint64
-	var links []*model.EventPlatformLink
-	canonicalID, err := s.canonicalRepo.GetCanonicalIDByEventID(ctx, event.ID)
-	if err == nil {
-		links, _ = s.canonicalRepo.ListLinksByCanonicalID(ctx, canonicalID)
-		for _, l := range links {
-			eventIDs = append(eventIDs, l.EventID)
-		}
-	}
-	if len(eventIDs) == 0 {
-		eventIDs = []uint64{event.ID}
-	}
-
-	odds, err := s.marketRepo.GetOddsByEventIDs(ctx, eventIDs)
+	odds, fetchedPerLink, err := s.fetchLiveOddsForEvent(ctx, event, eventIDs, links)
 	if err != nil {
-		return nil, fmt.Errorf("查询赔率失败: %w", err)
-	}
-	if len(odds) == 0 {
-		return nil, fmt.Errorf("该赛事暂无可用赔率")
+		return nil, err
 	}
 
 	// 3. 选赔率更高的平台
@@ -438,6 +596,25 @@ func (s *OrderService) PlaceOrderFromFrontend(ctx context.Context, req *PlaceOrd
 	// 8. 标记 contract_event 已处理
 	if err := s.contractEvents.UpdateProcessedByContractOrderID(ctx, req.ContractOrderID, req.ContractOrderID); err != nil {
 		s.logger.WithError(err).Warn("UpdateProcessedByContractOrderID failed")
+	}
+
+	// 9. 将本次拉取的实时赔率写回 event_odds，便于列表/详情展示最新赔率
+	if s.eventRepo != nil && len(fetchedPerLink) > 0 {
+		var oddsRows []repository.OddsRow
+		for _, link := range fetchedPerLink {
+			for _, r := range link.rows {
+				oddsRows = append(oddsRows, repository.OddsRow{
+					EventID:         link.eventID,
+					PlatformID:      link.platformID,
+					PlatformEventID: link.platformEventID,
+					OptionName:      r.OptionName,
+					Price:           r.Price,
+				})
+			}
+		}
+		if err := s.eventRepo.UpsertOddsForEvents(ctx, oddsRows); err != nil {
+			s.logger.WithError(err).Warn("UpsertOddsForEvents failed")
+		}
 	}
 
 	return &PlaceOrderResult{
@@ -576,17 +753,23 @@ func (s *OrderService) GetOrderDetail(ctx context.Context, orderUUID string) (*O
 	return detail, nil
 }
 
-// WithdrawInfo 提现所需链上参数（供前端/钱包让用户签名，Gas 由用户承担）
+// WithdrawInfo 提现所需参数；type=chain 时前端用 contract_address/method 让用户签名；type=kalshi 时后端处理
 type WithdrawInfo struct {
 	OrderUUID       string  `json:"order_uuid"`
 	UserWallet      string  `json:"user_wallet"`
-	Amount          float64 `json:"amount"`
-	ContractAddress string  `json:"contract_address"` // 合约地址，占位
-	Method          string  `json:"method"`           // 合约方法，如 withdraw
-	Message         string  `json:"message"`          // 说明：用户签名并支付 Gas 完成提现
+	Type            string  `json:"type"`                  // "chain" | "kalshi"
+	Amount          float64 `json:"amount"`                // 总可提现（链上）或 payout（Kalshi）
+	Fee             float64 `json:"fee,omitempty"`         // Kalshi 1% 手续费
+	UserAmount      float64 `json:"user_amount,omitempty"` // Kalshi 用户实得
+	ContractAddress string  `json:"contract_address"`      // 链上提现时合约地址
+	Method          string  `json:"method"`
+	Message         string  `json:"message"`
 }
 
-// GetWithdrawInfo 获取订单提现参数（仅 status=settled 可提现）
+const kalshiPlatformID = 2
+const feeRateBps = 100 // 1% = 100 bps
+
+// GetWithdrawInfo 获取订单提现参数（仅 status=settled 可提现）；Kalshi 返回 type=kalshi 与 fee/user_amount
 func (s *OrderService) GetWithdrawInfo(ctx context.Context, orderUUID string) (*WithdrawInfo, error) {
 	o, err := s.orderRepo.GetByUUID(ctx, orderUUID)
 	if err != nil {
@@ -595,23 +778,39 @@ func (s *OrderService) GetWithdrawInfo(ctx context.Context, orderUUID string) (*
 	if o.Status != "settled" {
 		return nil, fmt.Errorf("订单状态 %s 不可提现，需为 settled", o.Status)
 	}
-	// 计算可提现金额：实际收益 + 本金 - 已扣费用，此处简化为 bet_amount + actual_profit
-	amount := o.BetAmount + o.ActualProfit
-	if amount < 0 {
-		amount = 0
+	payout := o.BetAmount + o.ActualProfit
+	if payout < 0 {
+		payout = 0
+	}
+	if o.PlatformID == kalshiPlatformID {
+		profit := o.ActualProfit
+		if profit < 0 {
+			profit = 0
+		}
+		fee := profit * float64(feeRateBps) / 10000
+		userAmount := payout - fee
+		return &WithdrawInfo{
+			OrderUUID:  o.OrderUUID,
+			UserWallet: o.UserWallet,
+			Type:       "kalshi",
+			Amount:     payout,
+			Fee:        fee,
+			UserAmount: userAmount,
+			Message:    "后端将处理提现（Circle USD→USDC，1% 手续费入 FeeVault）",
+		}, nil
 	}
 	return &WithdrawInfo{
 		OrderUUID:       o.OrderUUID,
 		UserWallet:      o.UserWallet,
-		Amount:          amount,
-		ContractAddress: "", // 占位：从配置读取合约地址
+		Type:            "chain",
+		Amount:          payout,
+		ContractAddress: "", // 从配置读取
 		Method:          "withdraw",
 		Message:         "用户签名并支付 Gas 完成链上提现，Gas 费由用户承担",
 	}, nil
 }
 
-// RequestWithdraw 用户发起提现请求，更新订单状态为 withdraw_requested
-// 链上执行由前端/用户完成，后端仅记录状态
+// RequestWithdraw 用户发起提现：Kalshi 由后端计算并标记 withdrawn（实际打款需配置 Circle+链上）；链上由前端签名
 func (s *OrderService) RequestWithdraw(ctx context.Context, orderUUID string) error {
 	o, err := s.orderRepo.GetByUUID(ctx, orderUUID)
 	if err != nil {
@@ -620,7 +819,28 @@ func (s *OrderService) RequestWithdraw(ctx context.Context, orderUUID string) er
 	if o.Status != "settled" {
 		return fmt.Errorf("订单状态 %s 不可提现，需为 settled", o.Status)
 	}
+	if o.PlatformID == kalshiPlatformID {
+		return s.processKalshiWithdraw(ctx, o)
+	}
 	return s.orderRepo.UpdateOrderStatus(ctx, orderUUID, "withdraw_requested")
+}
+
+// processKalshiWithdraw 计算 1% 手续费与用户实得，更新订单为 withdrawn；实际打款需配置链上热钱包或 Circle payout
+func (s *OrderService) processKalshiWithdraw(ctx context.Context, o *model.Order) error {
+	payout := o.BetAmount + o.ActualProfit
+	if payout < 0 {
+		payout = 0
+	}
+	profit := o.ActualProfit
+	if profit < 0 {
+		profit = 0
+	}
+	fee := profit * float64(feeRateBps) / 10000
+	_ = fee
+	_ = payout
+	// TODO: 调用 Circle ConvertFromUSD(payout) 得到 USDC 数量，再链上 transfer(user, userAmount), transfer(feeVault, fee)
+	// 当前仅更新状态，实际打款需配置 chain.fee_vault_address 与热钱包或 Circle 打款 API
+	return s.orderRepo.UpdateOrderStatus(ctx, o.OrderUUID, "withdrawn")
 }
 
 // OnSettlementCompleted 链上结算完成时调用：更新订单为 settled 并写入 settlement_records
