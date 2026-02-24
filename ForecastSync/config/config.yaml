@@ -5,6 +5,13 @@ server:
   # CORS 允许的前端 Origin（可选；不配置时默认 http://localhost:3000, http://127.0.0.1:3000）
   cors_allow_origins: ["http://localhost:3000", "http://127.0.0.1:3000"]
 
+# 日志配置（路径与归档可配；不配 file_path 则仅输出到控制台）
+log:
+  file_path: ""        # 日志文件路径，如 logs/forecast_sync.log；空则只打 stdout
+  max_size_mb: 10      # 单文件达到 10MB 时切割
+  max_age_days: 2      # 归档保留 2 天，超期删除
+  also_stdout: true    # 写文件时是否同时输出到控制台
+
 # 数据库配置
 mysql:
   dsn: "postgres://postgres:postgres@127.0.0.1:5433/forecast_aggregation?sslmode=disable&TimeZone=Asia/Shanghai"

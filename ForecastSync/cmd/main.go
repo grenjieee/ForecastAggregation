@@ -5,8 +5,11 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -26,10 +29,47 @@ import (
 	"github.com/gin-contrib/pprof"
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
+	"gopkg.in/natefinch/lumberjack.v2"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
+
+// initLogger 根据配置初始化 logrus：可选文件输出、按大小切割、按天数归档。
+// 默认 10MB 切割、保留 2 天；file_path 为空则仅 stdout。
+func initLogger(cfg *config.Config) *logrus.Logger {
+	l := logrus.New()
+	l.SetLevel(logrus.InfoLevel)
+
+	lc := &cfg.Log
+	if lc.FilePath == "" {
+		l.SetOutput(os.Stdout)
+		return l
+	}
+
+	dir := filepath.Dir(lc.FilePath)
+	if dir != "." {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			l.SetOutput(os.Stdout)
+			l.Warnf("创建日志目录失败 %s，回退到 stdout: %v", dir, err)
+			return l
+		}
+	}
+
+	rotator := &lumberjack.Logger{
+		Filename:   lc.FilePath,
+		MaxSize:    lc.MaxSizeMB,
+		MaxAge:     lc.MaxAgeDays,
+		MaxBackups: 0,
+		Compress:   false,
+	}
+	if lc.AlsoStdout {
+		l.SetOutput(io.MultiWriter(rotator, os.Stdout))
+	} else {
+		l.SetOutput(rotator)
+	}
+	return l
+}
 
 // ensureDatabaseExists 当目标库不存在时，连接到 postgres 默认库并创建目标库（幂等）。
 // dsn 须为 URL 形式，如 postgres://user:pass@host:port/dbname?options
@@ -73,9 +113,8 @@ func main() {
 		log.Fatalf("加载配置文件失败: %v", err)
 	}
 
-	// 2. 初始化日志
-	logrusLogger := logrus.New()
-	logrusLogger.SetLevel(logrus.InfoLevel)
+	// 2. 初始化日志（路径、轮转、归档均从 config 读取，默认 10MB 切割、保留 2 天）
+	logrusLogger := initLogger(cfg)
 	logrusLogger.Info("配置文件加载成功")
 
 	// 3. 初始化GORM日志器（修正：正确创建GORM默认日志器）

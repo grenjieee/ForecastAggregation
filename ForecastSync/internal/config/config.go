@@ -15,10 +15,23 @@ import (
 type Config struct {
 	Server    ServerConfig              `mapstructure:"server"`    // 服务器配置
 	MySQL     MySQLConfig               `mapstructure:"mysql"`     // MySQL配置
+	Log       LogConfig                 `mapstructure:"log"`       // 日志配置（路径、轮转、归档）
 	Sync      SyncConfig                `mapstructure:"sync"`      // 同步调度配置
 	Platforms map[string]PlatformConfig `mapstructure:"platforms"` // 多平台独立配置
 	Circle    CircleConfig              `mapstructure:"circle"`    // Circle 兑换（占位，后续对接）
 	Chain     ChainConfig               `mapstructure:"chain"`     // 链与合约地址（监听与提现）
+}
+
+// LogConfig 日志文件与轮转配置
+type LogConfig struct {
+	// FilePath 日志文件路径；为空则仅输出到 stdout，不写文件
+	FilePath string `mapstructure:"file_path"`
+	// MaxSizeMB 单文件达到该大小（MB）时切割，默认 10
+	MaxSizeMB int `mapstructure:"max_size_mb"`
+	// MaxAgeDays 归档保留天数，超过则删除，默认 2
+	MaxAgeDays int `mapstructure:"max_age_days"`
+	// AlsoStdout 写文件时是否同时输出到 stdout，默认 true
+	AlsoStdout bool `mapstructure:"also_stdout"`
 }
 
 // ChainConfig 链 RPC 与合约地址（Polymarket 结算、FeeVault 等）
@@ -114,6 +127,14 @@ func LoadConfig() (*Config, error) {
 	var cfg Config
 	if err := viper.Unmarshal(&cfg); err != nil {
 		return nil, fmt.Errorf("解析配置文件失败: %w", err)
+	}
+
+	// 日志默认值：保留 2 天、10MB 切割
+	if cfg.Log.MaxSizeMB <= 0 {
+		cfg.Log.MaxSizeMB = 10
+	}
+	if cfg.Log.MaxAgeDays <= 0 {
+		cfg.Log.MaxAgeDays = 2
 	}
 
 	// 3. 敏感字段：用 env 覆盖（优先级 env > yaml）
