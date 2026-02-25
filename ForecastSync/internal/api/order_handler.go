@@ -48,7 +48,11 @@ func NewOrderHandler(db *gorm.DB, logger *logrus.Logger, adapters map[uint64]int
 			}
 		}
 	}
-	svc := service.NewOrderServiceWithDeps(db, logger, adapters, fiat, eventRepo, liveOddsFetchers)
+	var chainCfg *config.ChainConfig
+	if cfg != nil {
+		chainCfg = &cfg.Chain
+	}
+	svc := service.NewOrderServiceWithDeps(db, logger, adapters, fiat, eventRepo, liveOddsFetchers, chainCfg)
 	return &OrderHandler{
 		orderService: svc,
 		cfg:          cfg,
@@ -162,4 +166,42 @@ func (h *OrderHandler) PlaceOrder(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, result)
+}
+
+// UnfreezeRequest 解冻请求 body
+type UnfreezeRequest struct {
+	ContractOrderID string `json:"contract_order_id"` // 必填
+	Wallet          string `json:"wallet"`            // 可选，校验与入账钱包一致
+}
+
+// RequestUnfreeze 申请解冻 POST /api/orders/unfreeze
+func (h *OrderHandler) RequestUnfreeze(c *gin.Context) {
+	var req UnfreezeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request: " + err.Error()})
+		return
+	}
+	txHash, err := h.orderService.RequestUnfreeze(c.Request.Context(), req.ContractOrderID, req.Wallet)
+	if err != nil {
+		h.logger.WithError(err).Error("RequestUnfreeze failed")
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"tx_hash": txHash})
+}
+
+// GetContractOrderStatus 合约订单状态 GET /api/orders/contract-order-status?contract_order_id=xxx
+func (h *OrderHandler) GetContractOrderStatus(c *gin.Context) {
+	contractOrderID := c.Query("contract_order_id")
+	if contractOrderID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "contract_order_id is required"})
+		return
+	}
+	status, err := h.orderService.ContractOrderStatus(c.Request.Context(), contractOrderID)
+	if err != nil {
+		h.logger.WithError(err).Error("ContractOrderStatus failed")
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": status})
 }

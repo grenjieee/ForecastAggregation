@@ -52,8 +52,9 @@ func (s *ChainSubscriber) Run(ctx context.Context) error {
 
 	query := ethereum.FilterQuery{
 		Addresses: []common.Address{escrowAddr, settlementAddr},
-		Topics:    [][]common.Hash{{sigFundsLocked, sigSettled}},
+		Topics:    [][]common.Hash{{sigFundsLocked, sigSettled}}, //只监听入金和体现事件
 	}
+	s.logger.Info("subscript escrowAddr:%s,settlementAddr:%s", escrowAddr, settlementAddr)
 	ch := make(chan types.Log)
 	sub, err := s.client.SubscribeFilterLogs(ctx, query, ch)
 	if err != nil {
@@ -101,6 +102,7 @@ func (s *ChainSubscriber) handleFundsLocked(ctx context.Context, vLog types.Log)
 	fromAddr := common.BytesToAddress(vLog.Data[12:32])
 	amountBig := new(big.Int).SetBytes(vLog.Data[32:64])
 	amount := amountToFloat(amountBig, usdcDecimals)
+	s.logger.Info("accept fund locked betId:%s,contractOrderID:%s,fromAddr:%s,amount:%.2f", betId, contractOrderID, fromAddr.Hex(), amount)
 	ev := &service.DepositSuccessEvent{
 		ContractOrderID: strings.TrimPrefix(contractOrderID, "0x"),
 		UserWallet:      fromAddr.Hex(),
@@ -115,17 +117,18 @@ func (s *ChainSubscriber) handleFundsLocked(ctx context.Context, vLog types.Log)
 
 func (s *ChainSubscriber) handleSettled(ctx context.Context, vLog types.Log) error {
 	if len(vLog.Topics) < 2 {
-		return fmt.Errorf("Settled missing topic betId")
+		return fmt.Errorf("settled missing topic betId")
 	}
 	betId := vLog.Topics[1]
 	orderUUID := hex.EncodeToString(betId.Bytes())
 	if len(vLog.Data) < 64 {
-		return fmt.Errorf("Settled data too short")
+		return fmt.Errorf("settled data too short")
 	}
 	payoutBig := new(big.Int).SetBytes(vLog.Data[0:32])
 	feeBig := new(big.Int).SetBytes(vLog.Data[32:64])
 	payout := amountToFloat(payoutBig, usdcDecimals)
 	fee := amountToFloat(feeBig, usdcDecimals)
+	s.logger.Info("accept settle betId:%s,orderUUID:%s,payout:%.2f,fee:%.2f", betId.String(), orderUUID, payout, fee)
 	return s.listener.OnSettlementCompleted(ctx, orderUUID, vLog.TxHash.Hex(), payout, fee, 0)
 }
 

@@ -32,10 +32,10 @@ chain:
   chain_id: 84532
   rpc_url: "https://sepolia.base.org"
   ws_url: "wss://base-sepolia-rpc.publicnode.com"
-  escrow_address: "0x84477D371368565f8775a0be5a0347Ef40d83738"
-  bet_router_address: "0x288935133A04D3A4d1B9aa294039cD40a239844E"
-  settlement_address: "0x159CdB544990C284e3Ea2D1557cf70d6DD559209"
-  fee_vault_address: "0xC6855a60845D0F0b0c228B00310A483d6Fe0062e"
+  escrow_address: "0x986a7102008Aef5bE7b4fD52C9AA544992051519"
+  bet_router_address: "0xef38174A7802f317c941F7c35865A18c19f96b92"
+  settlement_address: "0x399E14Be6B571f7BC0A32B1F26CBabcAfaE477B3"
+  fee_vault_address: "0x3289A7d6B7aAc83607a5b1F1a3f31a83c10ed8D0"
 
 # 同步配置（支持多平台独立调度）
 sync:
@@ -44,7 +44,7 @@ sync:
   odds_sync_interval_sec: 60  # 赔率定时同步间隔（秒），仅对仍在交易中的事件
   odds_sync_enabled: true     # 是否启用定时赔率同步
 
-# 各平台独立配置
+# 各平台独立配置（交易 API Key/Secret 按平台使用不同 key，见 Readme 环境变量表；勿混用）
 platforms:
   # Polymarket配置（gamma 拉事件，clob 下单）
   polymarket:

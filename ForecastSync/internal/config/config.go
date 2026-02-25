@@ -138,11 +138,12 @@ func LoadConfig() (*Config, error) {
 	}
 
 	// 3. 敏感字段：用 env 覆盖（优先级 env > yaml）
+	// 交易相关 API Key/Secret 按平台使用不同环境变量前缀，见 Readme「交易相关 API Key/Secret 按平台隔离」；新增平台时在此处增加对应分支。
 	overrideFromEnv(&cfg)
 	return &cfg, nil
 }
 
-// overrideFromEnv 用环境变量覆盖敏感配置
+// overrideFromEnv 用环境变量覆盖敏感配置（各平台独立 key：Kalshi 用 KALSHI_*，Polymarket 用 POLYMARKET_*，不可混用）
 func overrideFromEnv(cfg *Config) {
 	if k, ok := cfg.Platforms["kalshi"]; ok {
 		if v := os.Getenv("KALSHI_AUTH_KEY"); v != "" {

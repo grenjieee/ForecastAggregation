@@ -181,6 +181,8 @@ GET http://localhost:8081/api/markets/evt-xxx
 
 ## 订单
 
+**合约订单流程简述**：用户入金（链上 lockFunds）→ 后端监听到入金成功后落库 → 用户调用「下单准备」获取待签名信息 → 用户签名后调用「下单」。若入金成功但用户未完成下单或下单失败，资金会停留在 Escrow 合约中；用户可调用「申请解冻」由服务端触发链上退款，解冻后该合约订单不可再用于下单（prepare/place 会拒绝并提示已解冻）。
+
 ### 3. 下单准备（获取待签名信息）
 
 后端**实时向三方平台查询赔率**并选出当前最高赔率，返回锁定赔率与待签名消息；用户对 `message_to_sign` 做 personal_sign 后再调用 **POST /api/orders/place** 并带上签名。
@@ -227,7 +229,7 @@ Content-Type: application/json
 }
 ```
 
-**Error:** 400 — 缺少参数、未找到对应入账事件、或无可用赔率等，body 为 `{"error": "..."}`。
+**Error:** 400 — 缺少参数、未找到对应入账事件、无可用赔率、或**该合约订单已解冻**等，body 为 `{"error": "..."}`。
 
 ---
 
@@ -285,9 +287,87 @@ Content-Type: application/json
 }
 ```
 
+**Error:** 400 — 未找到入账事件、签名校验失败、或**该合约订单已解冻，无法下单**等，body 为 `{"error": "..."}`。
+
 ---
 
-### 5. 订单列表
+### 5. 申请解冻（合约订单）
+
+入金成功但未完成「签名并下单」或下单失败时，用户可申请解冻该合约订单对应的资金。后端校验存在未处理且未解冻的入账记录后，由服务端调用 Escrow.releaseFunds 将资金退回到用户钱包，并标记该合约订单为已解冻；已解冻的合约订单不可再用于 prepare/place。
+
+- **接口 path:** `POST /api/orders/unfreeze`
+- **接口协议:** HTTP POST
+
+#### 接口请求参数
+
+| 请求参数        | 请求类型 | 是否必填 | 默认值 | 备注 |
+| --------------- | -------- | -------- | ------ | ---- |
+| contract_order_id | string | 是       | -      | 入金后得到的合约订单号（betId 十六进制，无 0x 前缀或带 0x 均可） |
+| wallet          | string   | 否       | -      | 可选，用于校验与入账钱包一致 |
+
+#### 接口响应参数
+
+| 参数名   | 字段类型 | 是否可空 | 备注 |
+| -------- | -------- | -------- | ---- |
+| tx_hash  | string   | 否       | 链上解冻交易哈希，可跳转区块浏览器查看 |
+
+#### 请求样例
+
+```json
+POST http://localhost:8081/api/orders/unfreeze
+Content-Type: application/json
+
+{
+  "contract_order_id": "798e3704c340206c65f27a15df098b10ab71dc36e93acd5602643673"
+}
+```
+
+#### 响应样例
+
+```json
+{
+  "tx_hash": "0x..."
+}
+```
+
+**Error:** 400 — 未找到可解冻的入账记录（可能已下单或已解冻）、或入账钱包与请求 wallet 不一致等，body 为 `{"error": "..."}`。
+
+---
+
+#### 5.1 查询合约订单状态（可选）
+
+前端可根据该接口在输入 contract_order_id 后提前获知状态，若为 `refunded` 则禁用「签名并下单」并展示解冻提示。
+
+- **接口 path:** `GET /api/orders/contract-order-status`
+- **接口协议:** HTTP GET
+
+#### 接口请求参数
+
+| 请求参数        | 请求类型 | 是否必填 | 备注 |
+| --------------- | -------- | -------- | ---- |
+| contract_order_id | string | 是       | 入金后得到的合约订单号 |
+
+#### 接口响应参数
+
+| 参数名 | 字段类型 | 备注 |
+| ------ | -------- | ---- |
+| status | string   | unprocessed：未处理可下单/可解冻；placed：已下单；refunded：已解冻；not_found：无入账记录 |
+
+#### 请求样例
+
+```
+GET http://localhost:8081/api/orders/contract-order-status?contract_order_id=798e3704c340206c65f27a15df098b10ab71dc36e93acd5602643673
+```
+
+#### 响应样例
+
+```json
+{ "status": "unprocessed" }
+```
+
+---
+
+### 6. 订单列表
 
 订单列表，按钱包与状态筛选、分页。
 
@@ -361,7 +441,7 @@ GET http://localhost:8081/api/orders?wallet=0x...&status=settled&page=1&page_siz
 
 ---
 
-### 6. 订单详情
+### 7. 订单详情
 
 订单详情。
 
@@ -434,7 +514,7 @@ GET http://localhost:8081/api/orders/order-uuid-xxx
 
 ---
 
-### 7. 获取提现参数
+### 8. 获取提现参数
 
 获取提现参数。仅当订单 `status` 为 `settled` 时可调用。
 
@@ -501,7 +581,7 @@ GET http://localhost:8081/api/orders/order-uuid-xxx/withdraw-info
 
 ---
 
-### 8. 发起提现
+### 9. 发起提现
 
 发起提现。仅当订单 `status` 为 `settled` 时可调用。Kalshi：后端执行兑付与链上转账，订单状态更新为 `withdrawn`。链上：仅记录请求；实际提现由前端根据 withdraw-info 调合约、用户签名完成。
 

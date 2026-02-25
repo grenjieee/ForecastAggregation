@@ -27,6 +27,8 @@ type ContractEventRepository interface {
 	SaveContractEvent(ctx context.Context, ev *model.ContractEvent) error
 	UpdateOrderUUIDAndProcessed(ctx context.Context, txHash, orderUUID string) error
 	GetUnprocessedByContractOrderID(ctx context.Context, contractOrderID string) (*model.ContractEvent, error)
+	GetContractEventByContractOrderID(ctx context.Context, contractOrderID string) (*model.ContractEvent, error)
+	MarkRefundedByContractOrderID(ctx context.Context, contractOrderID string) error
 	UpdateProcessedByContractOrderID(ctx context.Context, contractOrderID, orderUUID string) error
 }
 
@@ -137,11 +139,26 @@ func (r *orderRepository) UpdateOrderUUIDAndProcessed(ctx context.Context, txHas
 
 func (r *orderRepository) GetUnprocessedByContractOrderID(ctx context.Context, contractOrderID string) (*model.ContractEvent, error) {
 	var ev model.ContractEvent
-	if err := r.db.WithContext(ctx).Where("contract_order_id = ? AND processed = ? AND event_type = ?",
+	if err := r.db.WithContext(ctx).Where("contract_order_id = ? AND processed = ? AND event_type = ? AND refunded_at IS NULL",
 		contractOrderID, false, "DepositSuccess").First(&ev).Error; err != nil {
 		return nil, err
 	}
 	return &ev, nil
+}
+
+func (r *orderRepository) GetContractEventByContractOrderID(ctx context.Context, contractOrderID string) (*model.ContractEvent, error) {
+	var ev model.ContractEvent
+	if err := r.db.WithContext(ctx).Where("contract_order_id = ? AND event_type = ?", contractOrderID, "DepositSuccess").First(&ev).Error; err != nil {
+		return nil, err
+	}
+	return &ev, nil
+}
+
+func (r *orderRepository) MarkRefundedByContractOrderID(ctx context.Context, contractOrderID string) error {
+	now := time.Now()
+	return r.db.WithContext(ctx).Model(&model.ContractEvent{}).
+		Where("contract_order_id = ?", contractOrderID).
+		Updates(map[string]interface{}{"refunded_at": now}).Error
 }
 
 func (r *orderRepository) UpdateProcessedByContractOrderID(ctx context.Context, contractOrderID, orderUUID string) error {

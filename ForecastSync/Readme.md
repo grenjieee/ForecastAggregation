@@ -168,7 +168,7 @@ ForecastSync/
 - **GET /api/orders/:order_uuid/withdraw-info**：提现参数；Kalshi 订单返回 `type=kalshi` 与 `fee`/`user_amount`，链上订单返回 `contract_address` 与 `method` 供用户签名。
 - **POST /api/orders/:order_uuid/withdraw**：发起提现；Kalshi 由后端处理并更新为 `withdrawn`，链上由前端拿到 withdraw-info 后用户签名。
 
-前端需配置 **NEXT_PUBLIC_API_URL**（如 `http://localhost:8081`）指向本服务。链与合约地址在 `config/config.yaml` 的 `chain` 下配置（`rpc_url`、`ws_url`、`escrow_address`、`settlement_address`、`fee_vault_address`）。
+前端需配置 **NEXT_PUBLIC_API_URL**（如 `http://47.86.169.161`）指向本服务。链与合约地址在 `config/config.yaml` 的 `chain` 下配置（`rpc_url`、`ws_url`、`escrow_address`、`settlement_address`、`fee_vault_address`）。
 
 ## 库表结构
 
@@ -600,6 +600,14 @@ platforms:
     max_bet: 1
 ```
 
+**交易相关 API Key/Secret 按平台隔离**：不同平台使用不同的配置 key，不得混用。各平台在 `config.yaml` 中对应 `platforms.<平台名>.auth_key` / `auth_secret` 等，敏感值由环境变量覆盖（见下表）。新增平台时需在 `internal/config/config.go` 的 `overrideFromEnv` 中为该平台增加独立的环境变量前缀。
+
+| 平台 | config 路径 | 环境变量（Key/Secret 等） |
+|------|--------------|---------------------------|
+| Kalshi | `platforms.kalshi` | `KALSHI_AUTH_KEY`、`KALSHI_AUTH_SECRET` |
+| Polymarket | `platforms.polymarket` | `POLYMARKET_AUTH_KEY`、`POLYMARKET_AUTH_SECRET`、`POLYMARKET_AUTH_TOKEN`、`POLYMARKET_AUTH_PRIVATE_KEY` |
+| Circle（兑换） | `circle` | `CIRCLE_API_KEY`（非交易平台，Kalshi 链上资产兑 USD 用） |
+
 **环境变量说明（.env）**
 
 | 变量名 | 用途 | 必填 |
@@ -629,6 +637,6 @@ time="2026-02-08T18:19:29+08:00" level=info msg="服务启动成功，端口：8
 
 - 4. 执行以下命令触发同步指定预测平台的数据
 ```shell
-curl --location --request POST 'localhost:8081/sync/platform/polymarket' \
+curl --location --request POST '47.86.169.161/sync/platform/polymarket' \
 --data ''
 ```

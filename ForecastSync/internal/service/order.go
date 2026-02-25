@@ -10,10 +10,13 @@ import (
 	"strings"
 	"time"
 
+	"ForecastSync/internal/chain"
+	"ForecastSync/internal/config"
 	"ForecastSync/internal/interfaces"
 	"ForecastSync/internal/model"
 	"ForecastSync/internal/repository"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
@@ -59,15 +62,16 @@ type OrderService struct {
 	tradingAdapters  map[uint64]interfaces.TradingAdapter  // platformID -> adapter，可为 nil
 	liveOddsFetchers map[uint64]interfaces.LiveOddsFetcher // platformID -> 实时赔率拉取，可为 nil 则用 DB 赔率
 	fiatConversion   FiatConversionService                 // Kalshi 下单前 USDC->USD，可为 nil 则用占位
+	chainCfg         *config.ChainConfig                   // 解冻时调用 Escrow.releaseFunds，nil 则不可解冻
 }
 
 // NewOrderService 创建 OrderService。tradingAdapters 可为 nil，则不调用真实下单
 func NewOrderService(db *gorm.DB, logger *logrus.Logger, tradingAdapters map[uint64]interfaces.TradingAdapter) *OrderService {
-	return NewOrderServiceWithDeps(db, logger, tradingAdapters, nil, nil, nil)
+	return NewOrderServiceWithDeps(db, logger, tradingAdapters, nil, nil, nil, nil)
 }
 
-// NewOrderServiceWithDeps 创建 OrderService，支持注入 FiatConversion、EventRepo、LiveOddsFetchers
-func NewOrderServiceWithDeps(db *gorm.DB, logger *logrus.Logger, tradingAdapters map[uint64]interfaces.TradingAdapter, fiat FiatConversionService, eventRepo *repository.EventRepository, liveOddsFetchers map[uint64]interfaces.LiveOddsFetcher) *OrderService {
+// NewOrderServiceWithDeps 创建 OrderService，支持注入 FiatConversion、EventRepo、LiveOddsFetchers、ChainConfig（解冻用）
+func NewOrderServiceWithDeps(db *gorm.DB, logger *logrus.Logger, tradingAdapters map[uint64]interfaces.TradingAdapter, fiat FiatConversionService, eventRepo *repository.EventRepository, liveOddsFetchers map[uint64]interfaces.LiveOddsFetcher, chainCfg *config.ChainConfig) *OrderService {
 	if fiat == nil {
 		fiat = NewNoopFiatConversion()
 	}
@@ -82,6 +86,7 @@ func NewOrderServiceWithDeps(db *gorm.DB, logger *logrus.Logger, tradingAdapters
 		tradingAdapters:  tradingAdapters,
 		liveOddsFetchers: liveOddsFetchers,
 		fiatConversion:   fiat,
+		chainCfg:         chainCfg,
 	}
 }
 
@@ -315,6 +320,14 @@ func (s *OrderService) PrepareOrderFromFrontend(ctx context.Context, req *Prepar
 	}
 	_, err := s.contractEvents.GetUnprocessedByContractOrderID(ctx, req.ContractOrderID)
 	if err != nil {
+		if ce, getErr := s.contractEvents.GetContractEventByContractOrderID(ctx, req.ContractOrderID); getErr == nil && ce != nil {
+			if ce.Processed {
+				return nil, fmt.Errorf("该合约订单已下单")
+			}
+			if ce.RefundedAt != nil {
+				return nil, fmt.Errorf("该合约订单已解冻，无法继续下单")
+			}
+		}
 		return nil, fmt.Errorf("未找到未处理的入账事件 contract_order_id=%s: %w", req.ContractOrderID, err)
 	}
 	event, eventIDs, links, err := s.resolveEventAndLinks(ctx, req.EventUUID)
@@ -439,8 +452,14 @@ func verifyOrderSignature(userWallet, messageToSign, signatureHex string) error 
 	if err != nil || len(sig) < 65 {
 		return fmt.Errorf("invalid signature hex")
 	}
+	// 钱包 personal_sign 返回的 v 多为 27/28，go-ethereum SigToPub 期望 recovery id 0/1
+	sigCopy := make([]byte, 65)
+	copy(sigCopy, sig)
+	if sigCopy[64] == 27 || sigCopy[64] == 28 {
+		sigCopy[64] -= 27
+	}
 	hash := crypto.Keccak256Hash([]byte("\x19Ethereum Signed Message:\n" + strconv.Itoa(len(messageToSign)) + messageToSign))
-	pubKey, err := crypto.SigToPub(hash.Bytes(), sig)
+	pubKey, err := crypto.SigToPub(hash.Bytes(), sigCopy)
 	if err != nil {
 		return fmt.Errorf("signature recovery failed: %w", err)
 	}
@@ -469,9 +488,17 @@ func (s *OrderService) PlaceOrderFromFrontend(ctx context.Context, req *PlaceOrd
 		return nil, fmt.Errorf("contract_order_id, event_uuid, bet_option 必填")
 	}
 
-	// 1. 查未处理的 DepositSuccess 入账事件
+	// 1. 查未处理的 DepositSuccess 入账事件（未解冻）
 	ce, err := s.contractEvents.GetUnprocessedByContractOrderID(ctx, req.ContractOrderID)
 	if err != nil {
+		if ev, getErr := s.contractEvents.GetContractEventByContractOrderID(ctx, req.ContractOrderID); getErr == nil && ev != nil {
+			if ev.Processed {
+				return nil, fmt.Errorf("该合约订单已下单")
+			}
+			if ev.RefundedAt != nil {
+				return nil, fmt.Errorf("该合约订单已解冻，无法下单")
+			}
+		}
 		return nil, fmt.Errorf("未找到未处理的入账事件 contract_order_id=%s: %w", req.ContractOrderID, err)
 	}
 
@@ -623,6 +650,63 @@ func (s *OrderService) PlaceOrderFromFrontend(ctx context.Context, req *PlaceOrd
 		PlatformID:      bestPlatformID,
 		Status:          "placed",
 	}, nil
+}
+
+// RequestUnfreeze 申请解冻：校验存在未处理且未解冻的入账后调用 Escrow.releaseFunds，并标记已解冻。可选 wallet 用于校验入账钱包一致。
+func (s *OrderService) RequestUnfreeze(ctx context.Context, contractOrderID string, wallet string) (txHash string, err error) {
+	if contractOrderID == "" {
+		return "", fmt.Errorf("contract_order_id 必填")
+	}
+	if s.chainCfg == nil || s.chainCfg.ExecutorPrivateKey == "" || s.chainCfg.EscrowAddress == "" || s.chainCfg.RPCURL == "" {
+		return "", fmt.Errorf("解冻未配置链参数（rpc_url、escrow_address、CHAIN_EXECUTOR_PRIVATE_KEY）")
+	}
+
+	ce, err := s.contractEvents.GetUnprocessedByContractOrderID(ctx, contractOrderID)
+	if err != nil {
+		return "", fmt.Errorf("未找到可解冻的入账记录，可能已下单或已解冻")
+	}
+	if wallet != "" && ce.UserWallet != wallet {
+		return "", fmt.Errorf("入账钱包与请求 wallet 不一致")
+	}
+	amount := 0.0
+	if ce.DepositAmount != nil {
+		amount = *ce.DepositAmount
+	}
+	if amount <= 0 {
+		return "", fmt.Errorf("入账金额无效")
+	}
+	amountBig := chain.FloatToUSDCAmount(amount)
+	if amountBig.Sign() <= 0 {
+		return "", fmt.Errorf("入账金额无效")
+	}
+	toAddr := common.HexToAddress(ce.UserWallet)
+	txHash, err = chain.ReleaseFunds(ctx, s.chainCfg.RPCURL, s.chainCfg.EscrowAddress, s.chainCfg.ExecutorPrivateKey, contractOrderID, toAddr, amountBig)
+	if err != nil {
+		return "", fmt.Errorf("链上解冻失败: %w", err)
+	}
+	if err := s.contractEvents.MarkRefundedByContractOrderID(ctx, contractOrderID); err != nil {
+		s.logger.WithError(err).WithField("contract_order_id", contractOrderID).Warn("MarkRefundedByContractOrderID failed after tx sent")
+		// 交易已发出，仍返回 txHash，仅记录告警
+	}
+	return txHash, nil
+}
+
+// ContractOrderStatus 返回合约订单状态：unprocessed（可下单/可解冻）、placed（已下单）、refunded（已解冻）、not_found（无入账记录）
+func (s *OrderService) ContractOrderStatus(ctx context.Context, contractOrderID string) (status string, err error) {
+	if contractOrderID == "" {
+		return "", fmt.Errorf("contract_order_id 必填")
+	}
+	ce, err := s.contractEvents.GetContractEventByContractOrderID(ctx, contractOrderID)
+	if err != nil {
+		return "not_found", nil
+	}
+	if ce.RefundedAt != nil {
+		return "refunded", nil
+	}
+	if ce.Processed {
+		return "placed", nil
+	}
+	return "unprocessed", nil
 }
 
 // OrderListItem 订单列表项（含赛事标题）

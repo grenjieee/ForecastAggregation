@@ -22,6 +22,7 @@ type ContractEvent struct {
 	EventData       datatypes.JSON `gorm:"column:event_data;type:jsonb;not null"`
 	Processed       bool           `gorm:"column:processed;type:boolean;default:false"`
 	ProcessedAt     *time.Time     `gorm:"column:processed_at"`
+	RefundedAt      *time.Time     `gorm:"column:refunded_at"` // 解冻时间，非空表示该合约订单已解冻，不可再下单
 	CreatedAt       time.Time      `gorm:"column:created_at;type:timestamp;default:now()"`
 }
 

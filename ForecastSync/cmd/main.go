@@ -207,6 +207,8 @@ func main() {
 	r.GET("/api/orders/:order_uuid", orderHandler.GetOrderDetail)
 	r.GET("/api/orders/:order_uuid/withdraw-info", orderHandler.GetWithdrawInfo)
 	r.POST("/api/orders/:order_uuid/withdraw", orderHandler.RequestWithdraw)
+	r.POST("/api/orders/unfreeze", orderHandler.RequestUnfreeze)
+	r.GET("/api/orders/contract-order-status", orderHandler.GetContractOrderStatus)
 
 	// 9. 链上事件监听（Escrow FundsLocked → DepositSuccess；Settlement Settled → OnSettlementCompleted）
 	orderSvcForListener := service.NewOrderService(db, logrusLogger, tradingAdapters)
