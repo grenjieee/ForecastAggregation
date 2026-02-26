@@ -16,13 +16,25 @@ import { categories, mockMarkets, type Market } from "@/lib/mockData";
 import { Search, TrendingUp } from "lucide-react";
 import { useState } from "react";
 import { useBearStore, bearState } from "@/stores/BearStore";
+import { useQuery } from "@tanstack/react-query";
 
 export default function Home() {
   const [selectedCategory, setSelectedCategory] = useState<string>("All");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedMarket, setSelectedMarket] = useState<Market | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
-
+  const fetchList = () => {
+    return fetch(
+      "http://47.86.169.161/api/markets?type=sports&status=active&page=1&page_size=20",
+    ).then((res) => res.json());
+  };
+  const { isPending, error, data } = useQuery({
+    queryKey: ["items"],
+    queryFn: () => {
+      return fetchList();
+    },
+  });
+  console.log(isPending, error, data, 998);
   const filteredMarkets = mockMarkets.filter((market) => {
     const matchesCategory =
       selectedCategory === "All" || market.category === selectedCategory;
