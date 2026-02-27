@@ -27,10 +27,10 @@ interface MarketCardProps {
 export function MarketCard({ market, onViewDetails }: MarketCardProps) {
   const [isHovered, setIsHovered] = useState(false);
   const bestPrice = getBestPrice(market);
-  const bestPlatform = market.platforms.find(
-    p => p.platform === bestPrice.platform
-  );
-
+  // const bestPlatform = market.platforms.find(
+  //   p => p.platform === bestPrice.platform
+  // );
+  const bestPlatform = market.best_price_platform;
   const getCategoryColor = (category: string) => {
     const colors = {
       Politics: "bg-[oklch(0.65_0.3_330)] text-[oklch(0.95_0.02_290)]",
@@ -45,9 +45,8 @@ export function MarketCard({ market, onViewDetails }: MarketCardProps) {
 
   return (
     <Card
-      className={`neon-border-gradient backdrop-blur-sm transition-all duration-300 cursor-pointer ${
-        isHovered ? "neon-glow-cyan scale-[1.02] -translate-y-1" : ""
-      }`}
+      className={`neon-border-gradient backdrop-blur-sm transition-all duration-300 cursor-pointer ${isHovered ? "neon-glow-cyan scale-[1.02] -translate-y-1" : ""
+        }`}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
       onClick={() => onViewDetails(market)}
@@ -62,8 +61,8 @@ export function MarketCard({ market, onViewDetails }: MarketCardProps) {
               {market.description}
             </CardDescription>
           </div>
-          <Badge className={`${getCategoryColor(market.category)} shrink-0`}>
-            {market.category}
+          <Badge className={`${getCategoryColor(market.type)} shrink-0`}>
+            {market.type}
           </Badge>
         </div>
       </CardHeader>
@@ -86,7 +85,7 @@ export function MarketCard({ market, onViewDetails }: MarketCardProps) {
           <div className="flex items-end justify-between">
             <div>
               <div className="text-xs text-muted-foreground mb-1">
-                {bestPlatform?.platform}
+                {bestPlatform}
               </div>
               <div className="flex items-baseline gap-3">
                 <div>
@@ -126,19 +125,21 @@ export function MarketCard({ market, onViewDetails }: MarketCardProps) {
           <div>
             <div className="text-xs text-muted-foreground mb-1">Volume</div>
             <div className="text-sm font-semibold data-font text-foreground">
-              {market.totalVolume}
+              {/* {market.totalVolume} */}
+              1
             </div>
           </div>
           <div>
             <div className="text-xs text-muted-foreground mb-1">Platforms</div>
             <div className="text-sm font-semibold data-font text-foreground">
-              {market.platforms.length}
+              {/* {market.platforms.length} */}
+              1
             </div>
           </div>
           <div>
             <div className="text-xs text-muted-foreground mb-1">Ends</div>
             <div className="text-sm font-semibold data-font text-foreground">
-              {new Date(market.endDate).toLocaleDateString("en-US", {
+              {new Date(market.end_time).toLocaleDateString("en-US", {
                 month: "short",
                 day: "numeric",
               })}

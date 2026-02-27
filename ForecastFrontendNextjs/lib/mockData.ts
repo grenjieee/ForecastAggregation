@@ -9,259 +9,152 @@ export interface PlatformPrice {
   fee: string;
   url: string;
 }
-
+export interface MarketQueryResult {
+  page: number;
+  page_size: number;
+  total: number;
+  items: Market[];
+}
 export interface Market {
-  id: string;
+  canonical_id: number;
   title: string;
   description: string;
-  category: 'Politics' | 'Sports' | 'Crypto' | 'Finance' | 'Tech' | 'Culture';
-  endDate: string;
-  totalVolume: string;
-  platforms: PlatformPrice[];
-  imageUrl?: string;
+  type: string; // Changed from 'category' to 'type'
+  status: string;
+  end_time: number; // Changed from 'endDate' to 'end_time' and type to number
+  platform_count: number;
+  volume: number; // Changed from 'totalVolume' to 'volume' and type to number
+  save_pct: number;
+  best_price_platform: string;
+  outcomes: {
+    label: string;
+    price: number;
+    pct: number;
+  }[];
+  event_uuid: string;
 }
 
 export const mockMarkets: Market[] = [
   {
-    id: '1',
+    canonical_id: 1,
     title: 'Bitcoin price above $70,000 on Feb 10, 2026?',
     description: 'Will Bitcoin (BTC) close above $70,000 USD on February 10, 2026 at 11:59 PM UTC?',
-    category: 'Crypto',
-    endDate: '2026-02-10T23:59:59Z',
-    totalVolume: '$2.4M',
-    platforms: [
-      {
-        platform: 'Polymarket',
-        yesPrice: 0.34,
-        noPrice: 0.66,
-        volume: '$1.2M',
-        liquidity: '$450K',
-        fee: '2%',
-        url: 'https://polymarket.com'
-      },
-      {
-        platform: 'Kalshi',
-        yesPrice: 0.31,
-        noPrice: 0.69,
-        volume: '$850K',
-        liquidity: '$320K',
-        fee: '3%',
-        url: 'https://kalshi.com'
-      },
-      {
-        platform: 'Robinhood',
-        yesPrice: 0.36,
-        noPrice: 0.64,
-        volume: '$350K',
-        liquidity: '$180K',
-        fee: '1.5%',
-        url: 'https://robinhood.com'
-      }
-    ]
+    type: 'Crypto',
+    status: 'active',
+    end_time: 1754884799,
+    platform_count: 3,
+    volume: 2400000,
+    save_pct: 0.34,
+    best_price_platform: 'Polymarket',
+    outcomes: [
+      { label: 'Yes', price: 0.34, pct: 34 },
+      { label: 'No', price: 0.66, pct: 66 },
+    ],
+    event_uuid: 'event-1',
   },
   {
-    id: '2',
+    canonical_id: 2,
     title: 'Trump wins 2028 Republican nomination?',
     description: 'Will Donald Trump be the Republican nominee for the 2028 US Presidential election?',
-    category: 'Politics',
-    endDate: '2028-08-15T23:59:59Z',
-    totalVolume: '$5.8M',
-    platforms: [
-      {
-        platform: 'Polymarket',
-        yesPrice: 0.42,
-        noPrice: 0.58,
-        volume: '$3.2M',
-        liquidity: '$890K',
-        fee: '2%',
-        url: 'https://polymarket.com'
-      },
-      {
-        platform: 'Kalshi',
-        yesPrice: 0.45,
-        noPrice: 0.55,
-        volume: '$1.8M',
-        liquidity: '$620K',
-        fee: '3%',
-        url: 'https://kalshi.com'
-      },
-      {
-        platform: 'Robinhood',
-        yesPrice: 0.40,
-        noPrice: 0.60,
-        volume: '$800K',
-        liquidity: '$340K',
-        fee: '1.5%',
-        url: 'https://robinhood.com'
-      }
-    ]
+    type: 'Politics',
+    status: 'active',
+    end_time: 1754884799,
+    platform_count: 3,
+    volume: 5800000,
+    save_pct: 0.42,
+    best_price_platform: 'Polymarket',
+    outcomes: [
+      { label: 'Yes', price: 0.42, pct: 42 },
+      { label: 'No', price: 0.58, pct: 58 },
+    ],
+    event_uuid: 'event-2',
   },
   {
-    id: '3',
+    canonical_id: 3,
     title: 'Lakers win NBA Championship 2026?',
     description: 'Will the Los Angeles Lakers win the 2025-2026 NBA Championship?',
-    category: 'Sports',
-    endDate: '2026-06-30T23:59:59Z',
-    totalVolume: '$1.9M',
-    platforms: [
-      {
-        platform: 'Polymarket',
-        yesPrice: 0.18,
-        noPrice: 0.82,
-        volume: '$950K',
-        liquidity: '$380K',
-        fee: '2%',
-        url: 'https://polymarket.com'
-      },
-      {
-        platform: 'Kalshi',
-        yesPrice: 0.16,
-        noPrice: 0.84,
-        volume: '$620K',
-        liquidity: '$240K',
-        fee: '3%',
-        url: 'https://kalshi.com'
-      },
-      {
-        platform: 'Robinhood',
-        yesPrice: 0.20,
-        noPrice: 0.80,
-        volume: '$330K',
-        liquidity: '$150K',
-        fee: '1.5%',
-        url: 'https://robinhood.com'
-      }
-    ]
+    type: 'Sports',
+    status: 'active',
+    end_time: 1754884799,
+    platform_count: 3,
+    volume: 1900000,
+    save_pct: 0.18,
+    best_price_platform: 'Polymarket',
+    outcomes: [
+      { label: 'Yes', price: 0.18, pct: 18 },
+      { label: 'No', price: 0.82, pct: 82 },
+    ],
+    event_uuid: 'event-3',
   },
   {
-    id: '4',
+    canonical_id: 4,
     title: 'Ethereum reaches $5,000 before 2027?',
     description: 'Will Ethereum (ETH) reach or exceed $5,000 USD at any point before January 1, 2027?',
-    category: 'Crypto',
-    endDate: '2026-12-31T23:59:59Z',
-    totalVolume: '$3.2M',
-    platforms: [
-      {
-        platform: 'Polymarket',
-        yesPrice: 0.56,
-        noPrice: 0.44,
-        volume: '$1.8M',
-        liquidity: '$640K',
-        fee: '2%',
-        url: 'https://polymarket.com'
-      },
-      {
-        platform: 'Kalshi',
-        yesPrice: 0.53,
-        noPrice: 0.47,
-        volume: '$980K',
-        liquidity: '$420K',
-        fee: '3%',
-        url: 'https://kalshi.com'
-      },
-      {
-        platform: 'Robinhood',
-        yesPrice: 0.58,
-        noPrice: 0.42,
-        volume: '$420K',
-        liquidity: '$210K',
-        fee: '1.5%',
-        url: 'https://robinhood.com'
-      }
-    ]
+    type: 'Crypto',
+    status: 'active',
+    end_time: 1754884799,
+    platform_count: 3,
+    volume: 3200000,
+    save_pct: 0.56,
+    best_price_platform: 'Polymarket',
+    outcomes: [
+      { label: 'Yes', price: 0.56, pct: 56 },
+      { label: 'No', price: 0.44, pct: 44 },
+    ],
+    event_uuid: 'event-4',
   },
   {
-    id: '5',
+    canonical_id: 5,
     title: 'Fed cuts rates by March 2026?',
     description: 'Will the Federal Reserve cut interest rates by at least 25 basis points before March 31, 2026?',
-    category: 'Finance',
-    endDate: '2026-03-31T23:59:59Z',
-    totalVolume: '$4.5M',
-    platforms: [
-      {
-        platform: 'Polymarket',
-        yesPrice: 0.72,
-        noPrice: 0.28,
-        volume: '$2.4M',
-        liquidity: '$780K',
-        fee: '2%',
-        url: 'https://polymarket.com'
-      },
-      {
-        platform: 'Kalshi',
-        yesPrice: 0.68,
-        noPrice: 0.32,
-        volume: '$1.5M',
-        liquidity: '$560K',
-        fee: '3%',
-        url: 'https://kalshi.com'
-      },
-      {
-        platform: 'Robinhood',
-        yesPrice: 0.74,
-        noPrice: 0.26,
-        volume: '$600K',
-        liquidity: '$290K',
-        fee: '1.5%',
-        url: 'https://robinhood.com'
-      }
-    ]
+    type: 'Finance',
+    status: 'active',
+    end_time: 1754884799,
+    platform_count: 3,
+    volume: 4500000,
+    save_pct: 0.72,
+    best_price_platform: 'Polymarket',
+    outcomes: [
+      { label: 'Yes', price: 0.72, pct: 72 },
+      { label: 'No', price: 0.28, pct: 28 },
+    ],
+    event_uuid: 'event-5',
   },
   {
-    id: '6',
+    canonical_id: 6,
     title: 'Apple releases AR glasses in 2026?',
     description: 'Will Apple officially announce and release consumer AR/VR glasses in 2026?',
-    category: 'Tech',
-    endDate: '2026-12-31T23:59:59Z',
-    totalVolume: '$1.6M',
-    platforms: [
-      {
-        platform: 'Polymarket',
-        yesPrice: 0.28,
-        noPrice: 0.72,
-        volume: '$820K',
-        liquidity: '$340K',
-        fee: '2%',
-        url: 'https://polymarket.com'
-      },
-      {
-        platform: 'Kalshi',
-        yesPrice: 0.25,
-        noPrice: 0.75,
-        volume: '$540K',
-        liquidity: '$230K',
-        fee: '3%',
-        url: 'https://kalshi.com'
-      },
-      {
-        platform: 'Robinhood',
-        yesPrice: 0.30,
-        noPrice: 0.70,
-        volume: '$240K',
-        liquidity: '$120K',
-        fee: '1.5%',
-        url: 'https://robinhood.com'
-      }
-    ]
+    type: 'Tech',
+    status: 'active',
+    end_time: 1754884799,
+    platform_count: 3,
+    volume: 1600000,
+    save_pct: 0.28,
+    best_price_platform: 'Polymarket',
+    outcomes: [
+      { label: 'Yes', price: 0.28, pct: 28 },
+      { label: 'No', price: 0.72, pct: 72 },
+    ],
+    event_uuid: 'event-6',
   }
 ];
 
 export const categories = ['All', 'Politics', 'Sports', 'Crypto', 'Finance', 'Tech', 'Culture'] as const;
 
 export function getBestPrice(market: Market): { platform: string; yesPrice: number; savings: string } {
-  const bestYes = market.platforms.reduce((best, current) => 
-    current.yesPrice < best.yesPrice ? current : best
+  const bestYes = market.outcomes.reduce((best, current) => 
+    current.price < best.price ? current : best
   );
   
-  const worstYes = market.platforms.reduce((worst, current) => 
-    current.yesPrice > worst.yesPrice ? current : worst
+  const worstYes = market.outcomes.reduce((worst, current) => 
+    current.price > worst.price ? current : worst
   );
   
-  const savings = ((worstYes.yesPrice - bestYes.yesPrice) / worstYes.yesPrice * 100).toFixed(1);
+  const savings = ((worstYes.price - bestYes.price) / worstYes.price * 100).toFixed(1);
   
   return {
-    platform: bestYes.platform,
-    yesPrice: bestYes.yesPrice,
+    platform: bestYes.label,
+    yesPrice: bestYes.price,
     savings: `${savings}%`
   };
 }

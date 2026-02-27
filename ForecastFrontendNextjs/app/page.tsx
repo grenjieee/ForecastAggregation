@@ -8,46 +8,56 @@
  */
 
 import { MarketCard } from "@/components/MarketCard";
+import { MarketList } from "@/components/MarketList";
 import { MarketDetailDialog } from "@/components/MarketDetailDialog";
 import { WalletConnect } from "@/components/WalletConnect";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { categories, mockMarkets, type Market } from "@/lib/mockData";
+import { categories, MarketQueryResult, type Market } from "@/lib/mockData";
 import { Search, TrendingUp } from "lucide-react";
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { useBearStore, bearState } from "@/stores/BearStore";
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, InfiniteData } from "@tanstack/react-query";
+import { fetchMarkets } from "@/lib/api/markets";
+
+
 
 export default function Home() {
   const [selectedCategory, setSelectedCategory] = useState<string>("All");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedMarket, setSelectedMarket] = useState<Market | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
-  const fetchList = () => {
-    return fetch(
-      "http://47.86.169.161/api/markets?type=sports&status=active&page=1&page_size=20",
-    ).then((res) => res.json());
-  };
-  const { isPending, error, data } = useQuery({
-    queryKey: ["items"],
-    queryFn: () => {
-      return fetchList();
+  const PAGE_SIZE = 20;
+  const {
+    data,
+    isLoading,
+    isError,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = useInfiniteQuery({
+    queryKey: ["items", selectedCategory, searchQuery],
+    queryFn: ({ pageParam = 1 }) => fetchMarkets("sports", "active", pageParam, PAGE_SIZE),
+    initialPageParam: 1,
+    getNextPageParam: (lastPage: any, allPages: any[]) => {
+      if (!lastPage || !lastPage.items) return undefined;
+      return lastPage.items.length === PAGE_SIZE ? allPages.length + 1 : undefined;
     },
   });
-  console.log(isPending, error, data, 998);
-  const filteredMarkets = mockMarkets.filter((market) => {
+  const allMarkets = data?.pages?.flatMap(page => page.items) || [];
+  const filteredMarkets = allMarkets.filter((market) => {
     const matchesCategory =
-      selectedCategory === "All" || market.category === selectedCategory;
+      selectedCategory === "All" || market.type === selectedCategory;
     const matchesSearch =
       market.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
       market.description.toLowerCase().includes(searchQuery.toLowerCase());
     return matchesCategory && matchesSearch;
   });
 
-  const handleViewDetails = (market: Market) => {
+  const handleViewDetails = useCallback((market: Market) => {
     setSelectedMarket(market);
     setDialogOpen(true);
-  };
+  }, []);
   // const bears = useBearStore((state) => {
   //   console.log(state);
   //   return state.bears
@@ -144,22 +154,23 @@ export default function Home() {
                   : `${selectedCategory} Markets`}
               </h3>
               <p className="text-muted-foreground">
-                {filteredMarkets.length}{" "}
-                {filteredMarkets.length === 1 ? "market" : "markets"} available
+                {filteredMarkets?.length}{" "}
+                {filteredMarkets?.length === 1 ? "market" : "markets"} available
               </p>
             </div>
           </div>
 
-          {filteredMarkets.length > 0 ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {filteredMarkets.map((market) => (
-                <MarketCard
-                  key={market.id}
-                  market={market}
-                  onViewDetails={handleViewDetails}
-                />
-              ))}
-            </div>
+          {filteredMarkets?.length > 0 ? (
+            <MarketList
+              markets={filteredMarkets}
+              onViewDetails={handleViewDetails}
+              height={600}
+              onEndReached={() => {
+                if (hasNextPage && !isFetchingNextPage) fetchNextPage();
+              }}
+              isLoading={isLoading}
+              isFetchingNextPage={isFetchingNextPage}
+            />
           ) : (
             <div className="text-center py-16">
               <div className="neon-border-gradient rounded-lg p-12 max-w-md mx-auto bg-[oklch(0.12_0.06_285/0.5)]">
