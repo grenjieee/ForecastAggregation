@@ -376,6 +376,8 @@ func (p *Adapter) buildEventOdds(eventID uint64, platformID uint64, pe model.Pol
 			continue
 		}
 
+		// 二选一市场：第 1 个 outcome 记为 win(YES)、第 2 个为 lose(NO)，便于下单时用 YES/NO 匹配后保留原始 option_name 请求平台
+		numOutcomes := len(outcomes)
 		// 遍历每个选项，匹配价格
 		for i, outcomeName := range outcomes {
 			// 防止索引越界
@@ -392,19 +394,28 @@ func (p *Adapter) buildEventOdds(eventID uint64, platformID uint64, pe model.Pol
 
 			// 生成唯一标识（避免重复入库）
 			uniqueKey := fmt.Sprintf("%d_%s_%s_%s", platformID, pe.ID, market.Name, outcomeName)
-			// 截断超长选项名称
+			// 截断超长选项名称（保留平台原始名称，下单时直接用于解析 token_id）
 			optionName := p.truncateString(outcomeName, 64, "option_name")
 
-			// 构建EventOdds（使用解析后的价格，移除不存在的Liquidity/Volume）
+			optionType := ""
+			if numOutcomes == 2 {
+				if i == 0 {
+					optionType = "win"
+				} else {
+					optionType = "lose"
+				}
+			}
+
+			// 构建EventOdds（使用解析后的价格，option_name 为平台原始选项名）
 			odd := &model.EventOdds{
 				EventID:             eventID,
 				UniqueEventPlatform: uniqueKey,
 				PlatformID:          platformID,
 				OptionName:          optionName,
-				Price:               price, // 核心：使用解析后的赔率价格
+				OptionType:          optionType,
+				Price:               price,
 				UpdatedAt:           time.Now(),
 				CreatedAt:           time.Now(),
-				// 移除Liquidity/Volume（接口无该字段，数据库设默认值0）
 			}
 			oddsList = append(oddsList, odd)
 		}

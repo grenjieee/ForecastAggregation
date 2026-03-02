@@ -32,10 +32,10 @@ chain:
   chain_id: 84532
   rpc_url: "https://sepolia.base.org"
   ws_url: "wss://base-sepolia-rpc.publicnode.com"
-  escrow_address: "0x986a7102008Aef5bE7b4fD52C9AA544992051519"
-  bet_router_address: "0xef38174A7802f317c941F7c35865A18c19f96b92"
-  settlement_address: "0x399E14Be6B571f7BC0A32B1F26CBabcAfaE477B3"
-  fee_vault_address: "0x3289A7d6B7aAc83607a5b1F1a3f31a83c10ed8D0"
+  escrow_address: "0xa9470BCcFaDcC9Bf3CaE07391dF82D94393fe948"
+  bet_router_address: "0x5027212f991d40f0e42238D35966D528D4fBF070"
+  settlement_address: "0xDdA0d4b61C2a5b25212589f6E5f74262DfFF2227"
+  fee_vault_address: "0xf28fF7bEd62D9E11D43bC7855932e94DDa655683"
 
 # 同步配置（支持多平台独立调度）
 sync:

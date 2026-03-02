@@ -137,16 +137,32 @@ func (t *TradingAdapter) resolveTokenID(ctx context.Context, platformEventID str
 		ev = arr[0]
 	}
 	betOption = strings.TrimSpace(betOption)
+	betOptionUpper := strings.ToUpper(betOption)
+	isYesNo := betOptionUpper == "YES" || betOptionUpper == "NO"
+
 	for _, m := range ev.Markets {
-		if !m.AcceptingOrders {
-			continue
-		}
 		outcomes, err := parseJSONStringSlice(m.Outcomes)
 		if err != nil || len(outcomes) == 0 {
 			continue
 		}
 		tokens, err := parseJSONStringSlice(m.ClobTokenIds)
 		if err != nil || len(tokens) != len(outcomes) {
+			continue
+		}
+		// 二选一市场且选项为 YES/NO：优先按索引取 token（第 1 个=YES，第 2 个=NO），不依赖 outcome 名称
+		if len(outcomes) == 2 && isYesNo {
+			idx := 0
+			if betOptionUpper == "NO" {
+				idx = 1
+			}
+			ts := m.OrderPriceMinTickSize
+			if ts <= 0 {
+				ts = 0.01
+			}
+			return strings.TrimSpace(tokens[idx]), ts, m.NegRisk, nil
+		}
+		// 仅在接受订单的市场中按名称匹配
+		if !m.AcceptingOrders {
 			continue
 		}
 		for i, o := range outcomes {

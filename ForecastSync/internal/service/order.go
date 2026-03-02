@@ -244,13 +244,13 @@ func (s *OrderService) saveContractEvent(ctx context.Context, ev *ChainBetEvent)
 	return s.contractEvents.SaveContractEvent(ctx, ce)
 }
 
-// pickBestOdds 在所有赔率中挑选 BetOption 对应的最高价格
-// 若无法找到匹配 BetOption 的记录，则报错。
+// pickBestOdds 在所有赔率中挑选 BetOption（YES/NO 或平台原名）对应的最高价格，返回平台原始 option_name 供下单请求使用。
 func pickBestOdds(odds []*model.EventOdds, betOption string) (platformID uint64, price float64, optionName string, err error) {
 	betOption = strings.Trim(betOption, " ")
 	if betOption == "" {
 		return 0, 0, "", fmt.Errorf("betOption 不能为空")
 	}
+	betUpper := strings.ToUpper(betOption)
 
 	var (
 		found bool
@@ -260,14 +260,18 @@ func pickBestOdds(odds []*model.EventOdds, betOption string) (platformID uint64,
 	)
 
 	for _, o := range odds {
-		if strings.ToUpper(strings.Trim(o.OptionName, " ")) != strings.ToUpper(betOption) {
+		// 匹配：选项名一致，或 YES/NO 与 option_type win/lose 对应（保留各平台原始 option_name，下单时用原名请求）
+		optionUpper := strings.ToUpper(strings.Trim(o.OptionName, " "))
+		nameMatch := optionUpper == betUpper
+		winLoseMatch := (betUpper == "YES" && o.OptionType == "win") || (betUpper == "NO" && o.OptionType == "lose")
+		if !nameMatch && !winLoseMatch {
 			continue
 		}
 		if !found || o.Price > best {
 			found = true
 			best = o.Price
 			pid = o.PlatformID
-			name = o.OptionName
+			name = o.OptionName // 返回平台原始名称，供 Polymarket/Kalshi 等直接用原名解析 token 或下单
 		}
 	}
 
@@ -278,15 +282,27 @@ func pickBestOdds(odds []*model.EventOdds, betOption string) (platformID uint64,
 	return pid, best, name, nil
 }
 
+// clampOddsForSign 赔率 100%→0.99、0%→0.01，用于待签名消息与返回给前端的 locked_odds，避免平台拒单
+func clampOddsForSign(price float64) float64 {
+	if price >= 1 {
+		return 0.99
+	}
+	if price <= 0 {
+		return 0.01
+	}
+	return price
+}
+
 // PlaceOrderRequest 前端下单请求
 type PlaceOrderRequest struct {
 	ContractOrderID string  `json:"contract_order_id"` // 合约生成的订单号
 	EventUUID       string  `json:"event_uuid"`        // 本系统赛事 event_uuid 或 canonical_id
 	BetOption       string  `json:"bet_option"`        // YES/NO
 	Amount          float64 `json:"amount,omitempty"`  // 可选，用于与合约事件金额校验
-	// 用户签名后下单：Prepare 返回的待签名消息 + 前端 personal_sign 结果
-	MessageToSign string `json:"message_to_sign,omitempty"`
-	Signature     string `json:"signature,omitempty"`
+	// 前端可传 clamp 后的锁定赔率：100% 传 0.99、0% 传 0.01，避免平台拒单；不传则用实时最佳赔率并 clamp
+	LockedOdds    float64 `json:"locked_odds,omitempty"`
+	MessageToSign string  `json:"message_to_sign,omitempty"`
+	Signature     string  `json:"signature,omitempty"`
 }
 
 // PlaceOrderResult 下单结果
@@ -343,10 +359,12 @@ func (s *OrderService) PrepareOrderFromFrontend(ctx context.Context, req *Prepar
 		return nil, err
 	}
 	_ = fetchedPerLink // 仅 Prepare 不需要写回
+	// 待签名消息与返回前端的赔率用 clamp 值，避免 0/1 导致签名后下单被平台拒单
+	lockedOdds := clampOddsForSign(bestPrice)
 	expiresAt := time.Now().Unix() + prepareOrderExpirySec
-	msg := fmt.Sprintf("PlaceOrder:%s:%s:%s:%.6f:%d", req.ContractOrderID, req.EventUUID, req.BetOption, bestPrice, expiresAt)
+	msg := fmt.Sprintf("PlaceOrder:%s:%s:%s:%.6f:%d", req.ContractOrderID, req.EventUUID, req.BetOption, lockedOdds, expiresAt)
 	return &PrepareOrderResult{
-		LockedOdds:    bestPrice,
+		LockedOdds:    lockedOdds,
 		MessageToSign: msg,
 		ExpiresAtSec:  expiresAt,
 	}, nil
@@ -575,7 +593,11 @@ func (s *OrderService) PlaceOrderFromFrontend(ctx context.Context, req *PlaceOrd
 		}
 	}
 
-	// 6. 调用 TradingAdapter 下单（测试环境）
+	// 6. 调用 TradingAdapter 下单：优先使用前端传来的 locked_odds（前端已做 100%→0.99、0%→0.01），否则用实时最佳赔率
+	lockedOdds := bestPrice
+	if req.LockedOdds > 0 {
+		lockedOdds = req.LockedOdds
+	}
 	platformOrderID := ""
 	if s.tradingAdapters != nil {
 		if adapter := s.tradingAdapters[bestPlatformID]; adapter != nil {
@@ -584,7 +606,7 @@ func (s *OrderService) PlaceOrderFromFrontend(ctx context.Context, req *PlaceOrd
 				PlatformEventID: targetEvent.PlatformEventID,
 				BetOption:       bestOptionName,
 				BetAmount:       betAmountUSD,
-				LockedOdds:      bestPrice,
+				LockedOdds:      lockedOdds,
 			})
 			if err != nil {
 				s.logger.WithError(err).WithField("platform_id", bestPlatformID).Error("PlaceOrder failed")

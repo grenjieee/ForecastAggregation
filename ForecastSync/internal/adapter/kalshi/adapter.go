@@ -546,16 +546,24 @@ func (k *Adapter) buildEventOdds(eventID uint64, platformID uint64, ke model.Kal
 			}
 		}
 
-		// 构建EventOdds（移除Odds/MinBet/CacheLevel，补充必填字段）
+		// option_type：YES->win、NO->lose，便于与 Polymarket 等统一用 YES/NO 匹配后仍返回平台原始 option_name
+		optionType := ""
+		if strings.ToUpper(strings.TrimSpace(contract.Name)) == "YES" {
+			optionType = "win"
+		} else if strings.ToUpper(strings.TrimSpace(contract.Name)) == "NO" {
+			optionType = "lose"
+		}
+
+		// 构建EventOdds（option_name 保留平台原始名称 YES/NO）
 		odd := &model.EventOdds{
-			EventID:             eventID,   // 补充关联事件ID（必填外键）
-			UniqueEventPlatform: uniqueKey, // 补充唯一标识（必填）
+			EventID:             eventID,
+			UniqueEventPlatform: uniqueKey,
 			PlatformID:          platformID,
-			OptionName:          optionName, // 合约名称作为选项名
-			Price:               price,      // 使用解析后的价格（替换原Odds字段）
+			OptionName:          optionName,
+			OptionType:          optionType,
+			Price:               price,
 			CreatedAt:           time.Now(),
 			UpdatedAt:           time.Now(),
-			// 移除：Odds/MinBet/CacheLevel（数据库无这些字段）
 		}
 		oddsList = append(oddsList, odd)
 	}
