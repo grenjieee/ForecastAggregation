@@ -39,7 +39,7 @@ export function MarketList({ markets, onViewDetails, height = 600, onEndReached,
                     const marketIndex = rowIndex * columns + col;
                     if (marketIndex < markets.length) {
                         items.push(
-                            <div key={markets[marketIndex].canonical_id} style={{ flex: 1, minWidth: 0 }}>
+                            <div key={markets[marketIndex].canonical_id} style={{ flex: 1, minWidth: 0, marginRight: 12, marginLeft: 12 }}>
                                 <MarketCard
                                     market={markets[marketIndex]}
                                     onViewDetails={onViewDetails}
@@ -51,7 +51,7 @@ export function MarketList({ markets, onViewDetails, height = 600, onEndReached,
                     }
                 }
                 return (
-                    <div style={{ display: 'flex', gap: 12, marginTop: 12, marginBottom: 12 }}>
+                    <div style={{ display: 'flex', gap: 0, marginTop: 10, marginBottom: 10 }}>
                         {items}
                     </div>
                 );

@@ -6,6 +6,7 @@
  * - Hover effect: enhanced glow and slight lift
  */
 
+import React from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -24,7 +25,7 @@ interface MarketCardProps {
   onViewDetails: (market: Market) => void;
 }
 
-export function MarketCard({ market, onViewDetails }: MarketCardProps) {
+export const MarketCard = React.memo(function MarketCard({ market, onViewDetails }: MarketCardProps) {
   const [isHovered, setIsHovered] = useState(false);
   const bestPrice = getBestPrice(market);
   // const bestPlatform = market.platforms.find(
@@ -45,8 +46,7 @@ export function MarketCard({ market, onViewDetails }: MarketCardProps) {
 
   return (
     <Card
-      className={`neon-border-gradient backdrop-blur-sm transition-all duration-300 cursor-pointer ${isHovered ? "neon-glow-cyan scale-[1.02] -translate-y-1" : ""
-        }`}
+      className={`neon-border-gradient backdrop-blur-sm transition-all duration-300 cursor-pointer ${isHovered ? "neon-glow-cyan scale-[1.02] -translate-y-1" : ""}`}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
       onClick={() => onViewDetails(market)}
@@ -123,20 +123,6 @@ export function MarketCard({ market, onViewDetails }: MarketCardProps) {
         {/* Market Stats */}
         <div className="grid grid-cols-3 gap-3 text-center">
           <div>
-            <div className="text-xs text-muted-foreground mb-1">Volume</div>
-            <div className="text-sm font-semibold data-font text-foreground">
-              {/* {market.totalVolume} */}
-              1
-            </div>
-          </div>
-          <div>
-            <div className="text-xs text-muted-foreground mb-1">Platforms</div>
-            <div className="text-sm font-semibold data-font text-foreground">
-              {/* {market.platforms.length} */}
-              1
-            </div>
-          </div>
-          <div>
             <div className="text-xs text-muted-foreground mb-1">Ends</div>
             <div className="text-sm font-semibold data-font text-foreground">
               {new Date(market.end_time).toLocaleDateString("en-US", {
@@ -145,8 +131,14 @@ export function MarketCard({ market, onViewDetails }: MarketCardProps) {
               })}
             </div>
           </div>
+          <div>
+            <div className="text-xs text-muted-foreground mb-1">Volume</div>
+            <div className="text-sm font-semibold data-font text-foreground">
+              {market.volume}
+            </div>
+          </div>
         </div>
       </CardContent>
     </Card>
   );
-}
+});

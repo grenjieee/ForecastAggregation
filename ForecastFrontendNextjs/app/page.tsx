@@ -6,8 +6,6 @@
  * - Market cards in responsive grid
  * - Sticky header with glassmorphism effect
  */
-
-import { MarketCard } from "@/components/MarketCard";
 import { MarketList } from "@/components/MarketList";
 import { MarketDetailDialog } from "@/components/MarketDetailDialog";
 import { WalletConnect } from "@/components/WalletConnect";
@@ -46,6 +44,7 @@ export default function Home() {
   });
   const allMarkets = data?.pages?.flatMap(page => page.items) || [];
   const filteredMarkets = allMarkets.filter((market) => {
+    console.log("Filtering market:", market.type);
     const matchesCategory =
       selectedCategory === "All" || market.type === selectedCategory;
     const matchesSearch =
@@ -53,6 +52,7 @@ export default function Home() {
       market.description.toLowerCase().includes(searchQuery.toLowerCase());
     return matchesCategory && matchesSearch;
   });
+  const totalMarkets = data?.pages?.[0]?.total || null;
 
   const handleViewDetails = useCallback((market: Market) => {
     setSelectedMarket(market);
@@ -154,8 +154,7 @@ export default function Home() {
                   : `${selectedCategory} Markets`}
               </h3>
               <p className="text-muted-foreground">
-                {filteredMarkets?.length}{" "}
-                {filteredMarkets?.length === 1 ? "market" : "markets"} available
+                {totalMarkets !== null ? `${totalMarkets} markets available` : null}
               </p>
             </div>
           </div>

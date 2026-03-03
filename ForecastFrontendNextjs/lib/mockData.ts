@@ -139,7 +139,7 @@ export const mockMarkets: Market[] = [
   }
 ];
 
-export const categories = ['All', 'Politics', 'Sports', 'Crypto', 'Finance', 'Tech', 'Culture'] as const;
+export const categories = ['All', 'Politics', 'sports', 'Crypto', 'Finance', 'Tech', 'Culture'] as const;
 
 export function getBestPrice(market: Market): { platform: string; yesPrice: number; savings: string } {
   const bestYes = market.outcomes.reduce((best, current) => 
