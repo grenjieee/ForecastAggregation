@@ -11,7 +11,7 @@ interface IEscrowVault {
     event FundsReleased(bytes32 indexed betId, address to, uint256 amount);
     event BetExecuted(bytes32 indexed betId);
 
-    function lockFunds(bytes32 betId, uint256 amount) external;   // 锁定用户资金
-    function releaseFunds(bytes32 betId, address to, uint256 amount) external;  // 退还用户资金
+    function lockFunds(bytes32 betId, uint256 amount, bytes calldata signature) external;   // 锁定用户资金
+    function releaseFunds(bytes32 betId, address to, uint256 amount, bytes calldata signature) external;  // 退还用户资金
     function executedFunds(bytes32 betId, bytes32 topicId, address to, uint256 amount) external;  // 获取对应betId的执行资金
 }
