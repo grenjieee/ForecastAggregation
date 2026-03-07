@@ -4,7 +4,7 @@
  * - Pulse animation to attract attention
  * - Monospace font for wallet address
  */
-
+'use client';
 import { Button } from "@/components/ui/button";
 import { Wallet, Copy, LogOut, ChevronDown, Check } from "lucide-react"; // Added Check icon
 import { toast } from "sonner";

@@ -1,63 +1,20 @@
-"use client";
+// "use client";
 /**
  * Design: Cyberpunk Neon Futurism
  * - Hero section with animated neon grid background
  * - Category filters with neon highlights
- * - Market cards in responsive grid
+ * - Market cards in responsive gridnpx eslint . --ext .tsx,.ts
  * - Sticky header with glassmorphism effect
  */
-import { MarketList } from "@/components/MarketList";
-import { MarketDetailDialog } from "@/components/MarketDetailDialog";
-import { WalletConnect } from "@/components/WalletConnect";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { categories, MarketQueryResult, type Market } from "@/lib/mockData";
-import { Search, TrendingUp } from "lucide-react";
-import { useState, useCallback } from "react";
-import { useBearStore, bearState } from "@/stores/BearStore";
-import { useInfiniteQuery, InfiniteData } from "@tanstack/react-query";
-import { fetchMarkets } from "@/lib/api/markets";
+import { MarketList } from "@/components/market/MarketList";
+import { Footer, Header } from "@/components/homepage/HomePageComponents";
+import { Sectionsraech, Category } from "@/components/homepage/ClientComponents";
+import MarketListContainer from "@/components/market/MarketListContainer";
 
 
 
 export default function Home() {
-  const [selectedCategory, setSelectedCategory] = useState<string>("All");
-  const [searchQuery, setSearchQuery] = useState("");
-  const [selectedMarket, setSelectedMarket] = useState<Market | null>(null);
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const PAGE_SIZE = 20;
-  const {
-    data,
-    isLoading,
-    isError,
-    fetchNextPage,
-    hasNextPage,
-    isFetchingNextPage,
-  } = useInfiniteQuery({
-    queryKey: ["items", selectedCategory, searchQuery],
-    queryFn: ({ pageParam = 1 }) => fetchMarkets("sports", "active", pageParam, PAGE_SIZE),
-    initialPageParam: 1,
-    getNextPageParam: (lastPage: any, allPages: any[]) => {
-      if (!lastPage || !lastPage.items) return undefined;
-      return lastPage.items.length === PAGE_SIZE ? allPages.length + 1 : undefined;
-    },
-  });
-  const allMarkets = data?.pages?.flatMap(page => page.items) || [];
-  const filteredMarkets = allMarkets.filter((market) => {
-    console.log("Filtering market:", market.type);
-    const matchesCategory =
-      selectedCategory === "All" || market.type === selectedCategory;
-    const matchesSearch =
-      market.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      market.description.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchesCategory && matchesSearch;
-  });
-  const totalMarkets = data?.pages?.[0]?.total || null;
 
-  const handleViewDetails = useCallback((market: Market) => {
-    setSelectedMarket(market);
-    setDialogOpen(true);
-  }, []);
   // const bears = useBearStore((state) => {
   //   console.log(state);
   //   return state.bears
@@ -65,23 +22,7 @@ export default function Home() {
   return (
     <div className="min-h-screen">
       {/* Header */}
-      <header className="sticky top-0 z-50 backdrop-blur-md bg-[oklch(0.1_0.06_285/0.8)] border-b border-[oklch(0.3_0.15_200/0.3)]">
-        <div className="container py-4">
-          <div className="flex items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <div className="relative">
-                <TrendingUp className="h-8 w-8 text-[oklch(0.8_0.2_200)]" />
-                <div className="absolute inset-0 blur-lg bg-[oklch(0.8_0.2_200/0.5)]" />
-              </div>
-              <h1 className="text-2xl font-bold text-foreground">
-                Prediction
-                <span className="text-[oklch(0.8_0.2_200)]">Market</span>
-              </h1>
-            </div>
-            <WalletConnect />
-          </div>
-        </div>
-      </header>
+      <Header />
       {/* {bears} */}
       {/* Hero Section */}
       <section
@@ -107,21 +48,14 @@ export default function Home() {
             </p>
 
             {/* Search Bar */}
-            <div className="relative max-w-2xl mx-auto mt-8">
-              <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
-              <Input
-                placeholder="Search markets..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-12 h-14 text-lg neon-border-gradient bg-[oklch(0.12_0.06_285/0.8)] backdrop-blur-sm border-0 focus-visible:ring-[oklch(0.8_0.2_200)]"
-              />
-            </div>
+            <Sectionsraech />
           </div>
         </div>
       </section>
 
       {/* Category Filters */}
-      <section className="border-b border-[oklch(0.3_0.15_200/0.3)] bg-[oklch(0.1_0.06_285/0.5)] backdrop-blur-sm sticky top-[73px] z-40">
+      < Category />
+      {/* <section className="border-b border-[oklch(0.3_0.15_200/0.3)] bg-[oklch(0.1_0.06_285/0.5)] backdrop-blur-sm sticky top-[73px] z-40">
         <div className="container py-4">
           <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
             {categories.map((category) => (
@@ -141,73 +75,14 @@ export default function Home() {
             ))}
           </div>
         </div>
-      </section>
+      </section> */}
 
       {/* Markets Grid */}
-      <section className="py-12">
-        <div className="container">
-          <div className="flex items-center justify-between mb-8">
-            <div>
-              <h3 className="text-2xl font-bold text-foreground mb-2">
-                {selectedCategory === "All"
-                  ? "All Markets"
-                  : `${selectedCategory} Markets`}
-              </h3>
-              <p className="text-muted-foreground">
-                {totalMarkets !== null ? `${totalMarkets} markets available` : null}
-              </p>
-            </div>
-          </div>
-
-          {filteredMarkets?.length > 0 ? (
-            <MarketList
-              markets={filteredMarkets}
-              onViewDetails={handleViewDetails}
-              height={600}
-              onEndReached={() => {
-                if (hasNextPage && !isFetchingNextPage) fetchNextPage();
-              }}
-              isLoading={isLoading}
-              isFetchingNextPage={isFetchingNextPage}
-            />
-          ) : (
-            <div className="text-center py-16">
-              <div className="neon-border-gradient rounded-lg p-12 max-w-md mx-auto bg-[oklch(0.12_0.06_285/0.5)]">
-                <Search className="h-16 w-16 text-muted-foreground mx-auto mb-4" />
-                <h4 className="text-xl font-semibold text-foreground mb-2">
-                  No markets found
-                </h4>
-                <p className="text-muted-foreground">
-                  Try adjusting your search or category filter
-                </p>
-              </div>
-            </div>
-          )}
-        </div>
-      </section>
+      <MarketListContainer />
 
       {/* Footer */}
-      <footer className="border-t border-[oklch(0.3_0.15_200/0.3)] bg-[oklch(0.1_0.06_285/0.5)] backdrop-blur-sm py-8 mt-12">
-        <div className="container">
-          <div className="text-center text-sm text-muted-foreground">
-            <p className="mb-2">
-              Prediction Market Aggregator - Compare prices across multiple
-              platforms
-            </p>
-            <p className="text-xs">
-              This is a demo application. Market data is simulated for
-              demonstration purposes.
-            </p>
-          </div>
-        </div>
-      </footer>
+      <Footer />
 
-      {/* Market Detail Dialog */}
-      <MarketDetailDialog
-        market={selectedMarket}
-        open={dialogOpen}
-        onOpenChange={setDialogOpen}
-      />
     </div>
   );
 }

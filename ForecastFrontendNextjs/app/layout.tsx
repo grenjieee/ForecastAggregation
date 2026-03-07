@@ -8,6 +8,7 @@ import "./globals.css";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import { ThemeProvider } from "@/contexts/ThemeContext";
 import WalletProvider from "@/components/WalletProvider";
+import MarketDetailDialogWrapper from "@/components/homepage/MarketDetailDialogWrapper";
 
 const orbitron = Orbitron({
   subsets: ["latin"],
@@ -62,6 +63,7 @@ export default function RootLayout({
                 {/* Scanline effect for cyberpunk aesthetic */}
                 <div className="scanline" />
                 {children}
+                <MarketDetailDialogWrapper />//比赛详情弹窗
               </TooltipProvider>
             </WalletProvider>
           </ThemeProvider>

@@ -1,10 +1,4 @@
-/**
- * Design: Cyberpunk Neon Futurism
- * - Platform comparison table with neon highlights
- * - Best price highlighted with green glow
- * - External link buttons with platform branding
- */
-
+'use client';
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -26,7 +20,6 @@ interface MarketDetailDialogProps {
 }
 
 export function MarketDetailDialog({ market, open, onOpenChange }: MarketDetailDialogProps) {
-  if (!market) return null;
 
   const getPlatformColor = (platform: string = "Polymarket") => {
     const colors = {
@@ -54,7 +47,7 @@ export function MarketDetailDialog({ market, open, onOpenChange }: MarketDetailD
     return <p>Error loading market details.</p>;
   }
 
-
+  if (!market) return null;
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto neon-border-gradient">
