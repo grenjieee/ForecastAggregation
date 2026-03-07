@@ -1,6 +1,13 @@
 node_modules
 .env
 package-lock.json
+/lib
+/.cache
+/.openzeppelin
+/.states
+/.deploys
+/deployments
+/out
 
 # remixd build files
 /contracts/artifacts
