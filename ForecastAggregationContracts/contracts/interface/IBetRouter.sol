@@ -46,6 +46,7 @@ interface IBetRouter {
     function executeBetIntent(BetIntent calldata intent, bytes calldata signature) external;
     function getBetStatus(bytes32 betId) external view returns (BetStatus);
     function updateBetStatus(bytes32 betId, BetStatus status) external;
+    function updateBetStatusWithSig(bytes32 betId, BetStatus status, bytes calldata signature) external;
     function getBetTimestamp(bytes32 betId) external view returns (uint256);
 
 }
