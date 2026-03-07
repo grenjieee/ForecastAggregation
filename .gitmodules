@@ -1,4 +1,0 @@
-[submodule "ForecastAggregationContracts/lib/forge-std"]
-	path = ForecastAggregationContracts/lib/forge-std
-	url = https://github.com/foundry-rs/forge-std
-	
