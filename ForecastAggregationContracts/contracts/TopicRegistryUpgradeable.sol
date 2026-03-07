@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8;
 
+import "./lib/ProtocolAccessLib.sol";
+import "./interface/IProtocolAccess.sol";
 import "./interface/ITopicRegistry.sol";
-import "./ProtocolAccessUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/security/PausableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 
@@ -12,17 +13,34 @@ import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
  * - 可升级 UUPS
  * - 可 Pause
  */
-contract TopicRegistryUpgradeable is ProtocolAccessUpgradeable, PausableUpgradeable, UUPSUpgradeable, ITopicRegistry
+contract TopicRegistryUpgradeable is PausableUpgradeable, UUPSUpgradeable, ITopicRegistry
 {
+    using ProtocolAccessLib for IProtocolAccess;
 
     mapping(bytes32 => Topic) public topics;
 
+    IProtocolAccess public accessManager;
+    uint256[50] private __gap;
+
     /* ========== Initializer ========== */
 
-    function initialize(address admin) external initializer {
-        __ProtocolAccess_init(admin);
+    function initialize(address _accessManager) external initializer {
+        require(_accessManager != address(0), "Invalid access manager");
+        accessManager = IProtocolAccess(_accessManager);
         __Pausable_init();
         __UUPSUpgradeable_init();
+    }
+
+    /* ========== modifier ========== */
+
+    modifier onlyGovernance() {
+        accessManager.enforceGovernance();
+        _;
+    }
+
+    modifier onlyOracle() {
+        accessManager.enforceOracle();
+        _;
     }
 
     /* ========== Core Logic ========== */
@@ -39,7 +57,7 @@ contract TopicRegistryUpgradeable is ProtocolAccessUpgradeable, PausableUpgradea
         bytes32 topicId,
         string calldata question,
         uint8 outcomeCount
-    ) external override onlyRole(GOVERNANCE_ROLE) whenNotPaused {
+    ) external override onlyOracle whenNotPaused {
         if (topics[topicId].outcomeCount != 0) {
             revert TopicExists(topicId);
         }
@@ -63,7 +81,7 @@ contract TopicRegistryUpgradeable is ProtocolAccessUpgradeable, PausableUpgradea
      * Emits {TopicStatusUpdated}
     **/
     function setTopicActive(bytes32 topicId, bool active)
-        external override onlyRole(EXECUTOR_ROLE) whenNotPaused {
+        external override onlyOracle whenNotPaused {
         topics[topicId].active = active;
         emit TopicStatusUpdated(topicId, active);
     }
@@ -81,10 +99,10 @@ contract TopicRegistryUpgradeable is ProtocolAccessUpgradeable, PausableUpgradea
 
     /* ========== Pause Control ========== */
 
-    function pause() external onlyRole(GOVERNANCE_ROLE) { _pause(); }
-    function unpause() external onlyRole(GOVERNANCE_ROLE) { _unpause(); }
+    function pause() external onlyGovernance { _pause(); }
+    function unpause() external onlyGovernance { _unpause(); }
 
     /* ========== Upgrade Control ========== */
     
-    function _authorizeUpgrade(address) internal override onlyRole(GOVERNANCE_ROLE) {}
+    function _authorizeUpgrade(address) internal override onlyGovernance {}
 }

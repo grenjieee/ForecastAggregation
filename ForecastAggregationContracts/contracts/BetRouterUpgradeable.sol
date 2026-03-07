@@ -2,7 +2,8 @@
 pragma solidity ^0.8;
 
 /* ========= OpenZeppelin Upgradeable ========= */
-import "./ProtocolAccessUpgradeable.sol";
+import "./lib/ProtocolAccessLib.sol";
+import "./interface/IProtocolAccess.sol";
 import "./interface/IBetRouter.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
@@ -18,9 +19,10 @@ import "@openzeppelin/contracts-upgradeable/utils/cryptography/ECDSAUpgradeable.
  *         - 可暂停
  *         - 权限化执行
  */
-contract BetRouterUpgradeable is Initializable, UUPSUpgradeable, PausableUpgradeable, ProtocolAccessUpgradeable, EIP712Upgradeable, IBetRouter
+contract BetRouterUpgradeable is Initializable, UUPSUpgradeable, PausableUpgradeable, EIP712Upgradeable, IBetRouter
 {
     using ECDSAUpgradeable for bytes32;
+    using ProtocolAccessLib for IProtocolAccess;
 
     bytes32 public constant BET_INTENT_TYPEHASH =
         keccak256(
@@ -33,17 +35,42 @@ contract BetRouterUpgradeable is Initializable, UUPSUpgradeable, PausableUpgrade
     mapping(bytes32 => bool) public usedIntents;    // Intent 是否已使用
     mapping(bytes32 => BetStatus) public betStatus; // betId → 状态
     mapping(bytes32 => uint256) public betTimestamp;    // betId → 时间戳
+    IProtocolAccess public accessManager;
+    uint256[50] private __gap;
 
     /* ========== Initializer ========== */
 
-    function initialize(address admin) external initializer {
-        __ProtocolAccess_init(admin);
+    function initialize(address _accessManager) external initializer {
+        require(_accessManager != address(0), "Invalid access manager");
+        accessManager = IProtocolAccess(_accessManager);
         __Pausable_init();
         __UUPSUpgradeable_init();
         __EIP712_init(
             "PredictionMarketAggregator",
             "1"
         );
+    }
+
+    /* ========== modifier ========== */
+
+    modifier onlyGovernance() {
+        accessManager.enforceGovernance();
+        _;
+    }
+
+    modifier onlyExecutor() {
+        accessManager.enforceExecutor();
+        _;
+    }
+
+    modifier onlyOracle() {
+        accessManager.enforceOracle();
+        _;
+    }
+
+    modifier onlyWithdrawRole() {
+        accessManager.enforceWithdrawRole();
+        _;
     }
 
     /* ========== Core Logic ========== */
@@ -58,7 +85,6 @@ contract BetRouterUpgradeable is Initializable, UUPSUpgradeable, PausableUpgrade
         external
         override
         whenNotPaused
-        onlyRole(EXECUTOR_ROLE)
     {
         if (block.timestamp > intent.deadline) {
             revert IntentExpired(intent.deadline, block.timestamp);
@@ -131,7 +157,27 @@ contract BetRouterUpgradeable is Initializable, UUPSUpgradeable, PausableUpgrade
         return betStatus[betId];
     }
 
-    function updateBetStatus(bytes32 betId, BetStatus status) external override onlyRole(EXECUTOR_ROLE) {
+    function updateBetStatus(bytes32 betId, BetStatus status) external override onlyExecutor {
+        betStatus[betId] = status;
+    }
+
+    /**
+     * @notice 安全更新 BetStatus
+     * @param betId 下注 ID
+     * @param status 新状态
+     * @param signature 前端签名 (签名 digest = keccak256(betId, status, signerNonce))  确保前端的钱包已经有Executor角色
+     */
+    function updateBetStatusWithSig(bytes32 betId, BetStatus status, bytes calldata signature) external override {
+        uint256 signerNonce = nonces[tx.origin];
+        bytes32 digest = keccak256(abi.encodePacked(betId, status, signerNonce));
+
+        if (usedIntents[digest]) {
+            revert IntentAlreadyUsed(digest);
+        }
+
+        address signer = ECDSAUpgradeable.recover(digest, signature);
+        require(accessManager.isExecutor(signer), "Unauthorized signer");        
+
         betStatus[betId] = status;
     }
 
@@ -141,11 +187,11 @@ contract BetRouterUpgradeable is Initializable, UUPSUpgradeable, PausableUpgrade
 
     /* ========== Pause Control ========== */
 
-    function pause() external onlyRole(GOVERNANCE_ROLE) {
+    function pause() external onlyGovernance {
         _pause();
     }
 
-    function unpause() external onlyRole(GOVERNANCE_ROLE) {
+    function unpause() external onlyGovernance {
         _unpause();
     }
 
@@ -154,6 +200,6 @@ contract BetRouterUpgradeable is Initializable, UUPSUpgradeable, PausableUpgrade
     function _authorizeUpgrade(address)
         internal
         override
-        onlyRole(GOVERNANCE_ROLE)
+        onlyGovernance
     {}
 }

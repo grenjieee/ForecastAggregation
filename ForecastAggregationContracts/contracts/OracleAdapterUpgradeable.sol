@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8;
 
+import "./lib/ProtocolAccessLib.sol";
+import "./interface/IProtocolAccess.sol";
 import "./interface/IOracleAdapter.sol";
-import "./ProtocolAccessUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/security/PausableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 
@@ -10,17 +11,35 @@ import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
  * @title OracleAdapterUpgradeable
  * @notice 接收外部预测市场结果
  */
-contract OracleAdapterUpgradeable is ProtocolAccessUpgradeable, PausableUpgradeable, UUPSUpgradeable, IOracleAdapter
-{
+contract OracleAdapterUpgradeable is PausableUpgradeable, UUPSUpgradeable, IOracleAdapter
+{   
+    using ProtocolAccessLib for IProtocolAccess;
+
     mapping(bytes32 => uint8) public results; // topicId → outcome
     mapping(bytes32 => bool) public resolved; // topicId 是否已上报
 
+    IProtocolAccess public accessManager;
+    uint256[50] private __gap;
+
     /* ========== Initializer ========== */
 
-    function initialize(address admin) external initializer {
-        __ProtocolAccess_init(admin);
+    function initialize(address _accessManager) external initializer {
+        require(_accessManager != address(0), "Invalid access manager");
+        accessManager = IProtocolAccess(_accessManager);
         __Pausable_init();
         __UUPSUpgradeable_init();
+    }
+
+    /* ========== modifier ========== */
+
+    modifier onlyGovernance() {
+        accessManager.enforceGovernance();
+        _;
+    }
+
+    modifier onlyOracle() {
+        accessManager.enforceOracle();
+        _;
     }
     
     /* ========== Core Logic ========== */
@@ -35,7 +54,7 @@ contract OracleAdapterUpgradeable is ProtocolAccessUpgradeable, PausableUpgradea
     function reportResult(bytes32 topicId, uint8 outcome)
         external
         override
-        onlyRole(ORACLE_ROLE)
+        onlyOracle
         whenNotPaused
     {
         if (resolved[topicId]) {
@@ -68,10 +87,10 @@ contract OracleAdapterUpgradeable is ProtocolAccessUpgradeable, PausableUpgradea
 
     /* ========== Pause Control ========== */
 
-    function pause() external onlyRole(GOVERNANCE_ROLE) { _pause(); }
-    function unpause() external onlyRole(GOVERNANCE_ROLE) { _unpause(); }
+    function pause() external onlyGovernance { _pause(); }
+    function unpause() external onlyGovernance { _unpause(); }
 
     /* ========== Upgrade Control ========== */
 
-    function _authorizeUpgrade(address) internal override onlyRole(GOVERNANCE_ROLE) {}
+    function _authorizeUpgrade(address) internal override onlyGovernance {}
 }
