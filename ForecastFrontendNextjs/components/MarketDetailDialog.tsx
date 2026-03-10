@@ -9,7 +9,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useQuery } from "@tanstack/react-query";
-import { fetchMarketDetail, MarketDetail, PlatformOption } from "@/lib/api/markets";
+import { fetchMarketDetail, MarketDetail, placeOrder, PlatformOption } from "@/lib/api/markets";
 import { type Market } from "@/lib/mockData";
 import { ExternalLink, TrendingDown, TrendingUp } from "lucide-react";
 
@@ -92,7 +92,14 @@ export function MarketDetailDialog({ market, open, onOpenChange }: MarketDetailD
                       <Button
                         size="sm"
                         className={`bg-linear-to-r ${getPlatformColor()} text-white hover:scale-105 transition-all`}
-                        onClick={() => console.log("dianjihou xiazhu ")}
+                        onClick={() => {
+                          // placeOrder(market.contract_order_id,market.event_uuid, option.option_name, 0.1, { amount: 0.1 }).then(() => {
+                          //   alert(`Successfully placed a bet on ${option.option_name} at ${option.price}`);
+                          // }
+                          console.log('xiazhu')
+
+                        }
+                        }
                       >
                         Trade Now
                         <ExternalLink className="ml-2 h-4 w-4" />

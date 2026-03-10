@@ -6,7 +6,7 @@
  */
 'use client';
 import { Button } from "@/components/ui/button";
-import { Wallet, Copy, LogOut, ChevronDown, Check } from "lucide-react"; // Added Check icon
+import { Wallet, Copy, LogOut, ChevronDown, FileText, Check } from "lucide-react"; // Added FileText icon
 import { toast } from "sonner";
 import ConnectWallet from "./ConnectWallet";
 import { useAccount, useDisconnect } from "wagmi";
@@ -19,11 +19,13 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useState } from "react";
+import { useModalStore } from "@/stores/modalStore";
 
 export function WalletConnect() {
   const { address, isConnected } = useAccount();
   const { disconnect } = useDisconnect();
   const [copied, setCopied] = useState(false);
+  const { openPlayerRechargeModal, openBetHistoryModal } = useModalStore();
 
   const handleCopy = () => {
     if (address) {
@@ -31,6 +33,16 @@ export function WalletConnect() {
       setCopied(true);
       toast.success("Address copied to clipboard");
       setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
+  const showBetRecord = () => {
+    if (address) {
+      console.log('show bet history for', address);
+      openBetHistoryModal(address);
+      //  openPlayerRechargeModal(address);
+    } else {
+      toast.error("请先连接钱包");
     }
   };
 
@@ -52,16 +64,26 @@ export function WalletConnect() {
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-56 bg-black/90 border-[#00ff9d]/30 text-[#00ff9d]">
-        <DropdownMenuLabel>My Wallet</DropdownMenuLabel>
+        <DropdownMenuLabel>我的钱包</DropdownMenuLabel>
         <DropdownMenuSeparator className="bg-[#00ff9d]/20" />
-        <DropdownMenuItem 
+
+        <DropdownMenuItem
+          onClick={showBetRecord}
+          className="cursor-pointer focus:bg-[#00ff9d]/10 focus:text-[#00ff9d] transition-colors"
+        >
+          <FileText className="mr-2 h-4 w-4" />
+          <span>下注记录</span>
+        </DropdownMenuItem>
+
+        <DropdownMenuItem
           onClick={handleCopy}
           className="cursor-pointer focus:bg-[#00ff9d]/10 focus:text-[#00ff9d] transition-colors"
         >
           {copied ? <Check className="mr-2 h-4 w-4" /> : <Copy className="mr-2 h-4 w-4" />}
           <span>{copied ? "Copied!" : "Copy Address"}</span>
         </DropdownMenuItem>
-        <DropdownMenuItem 
+
+        <DropdownMenuItem
           onClick={handleDisconnect}
           className="cursor-pointer focus:bg-red-500/10 focus:text-red-500 text-red-400 transition-colors"
         >
@@ -72,3 +94,9 @@ export function WalletConnect() {
     </DropdownMenu>
   ) : <ConnectWallet />;
 }
+function openPlayerRechargeModal(address: string) {
+  throw new Error("Function not implemented.");
+}
+
+
+

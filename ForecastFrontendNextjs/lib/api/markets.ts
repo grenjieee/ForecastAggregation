@@ -93,17 +93,11 @@ export const placeOrder = async (payload: PlaceOrderPayload) => {
 };
 
 // 获取订单列表
-export const fetchOrders = async ({
-  wallet,
-  status,
-  page = 1,
-  pageSize = 20,
-}: FetchOrdersParams) => {
+export const fetchOrders = async ({ wallet, status = '', page = 1 }: { wallet: string; status?: string; page?: number }): Promise<FetchOrdersRespone> => {
   const query = new URLSearchParams();
   query.set("wallet", wallet);
-  if (status) query.set("status", status);
   query.set("page", String(page));
-  query.set("page_size", String(pageSize));
+  query.set("page_size", "20"); // 写死 pageSize 为 20 settled 
 
   const response = await fetch(`${BASE_URL}/orders?${query.toString()}`);
 
@@ -111,7 +105,9 @@ export const fetchOrders = async ({
     throw new Error("Failed to fetch orders");
   }
 
-  return response.json();
+  const data: FetchOrdersRespone = await response.json();
+  console.log("Fetched orders:", data);
+  return data;
 };
 
 // 获取订单详情
@@ -167,9 +163,23 @@ export interface PlaceOrderPayload {
   wallet?: string;
 }
 
-export interface FetchOrdersParams {
-  wallet: string;
-  status?: string;
-  page?: number;
-  pageSize?: number;
+
+
+export interface FetchOrdersRespone {
+  page: number;
+  pageSize: number;
+  total: number;
+  items: Array<{
+    orderUuid: string;
+    userWallet: string;
+    eventTitle: string;
+    eventId: number;
+    platformId: number;
+    platformOrderId: string;
+    betOption: string;
+    betAmount: number;
+    lockedOdds: number;
+    status: string;
+    createdAt: number;
+  }>;
 }
