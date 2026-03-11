@@ -8,22 +8,15 @@ import { useTokenBalance } from "@/lib/web3api";
 
 export default function PlayerRechargeModal({ address, onClose }: { address: string; onClose: () => void }) {
     const [amount, setAmount] = useState("");
-    const [balance, setBalance] = useState<string | null>(null);
+    const { data: balance, error } = useTokenBalance(address);
 
     useEffect(() => {
-        const fetchBalance = async () => {
-            try {
-                const balance = await useTokenBalance(address);
-                setBalance(balance?.formatted || null);
-            } catch (error) {
-                console.error("Error fetching token balance:", error);
-            }
-        };
-        fetchBalance();
-    },);
+        if (error) {
+            console.error("Error fetching token balance:", error);
+        }
+    }, [error]);
 
     useEffect(() => {
-
         // Disable scrolling when the modal is open
         document.body.style.overflow = "hidden";
         return () => {
@@ -44,8 +37,9 @@ export default function PlayerRechargeModal({ address, onClose }: { address: str
                             </button>
                         </DialogTitle>
                         <DialogDescription className="text-base text-muted-foreground mt-2">
-                            <h1> {address} </h1>
-                            <h1> 余额：{balance}</h1>
+                            <div>
+                                余额：{balance}
+                            </div>
                         </DialogDescription>
                         <div className="relative max-w-2xl mx-auto mt-8">
                             <Input

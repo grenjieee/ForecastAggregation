@@ -39,8 +39,8 @@ export function WalletConnect() {
   const showBetRecord = () => {
     if (address) {
       console.log('show bet history for', address);
-      openBetHistoryModal(address);
-      //  openPlayerRechargeModal(address);
+      // openBetHistoryModal(address);
+      openPlayerRechargeModal(address);
     } else {
       toast.error("请先连接钱包");
     }

@@ -1,233 +1,70 @@
 import { useContractRead } from "wagmi";
-import { formatUnits } from "ethers";
-import { createPublicClient, http } from "viem";
+import { ethers } from "ethers";
+import { createPublicClient, createWalletClient, http } from "viem";
 import { sepolia } from "./chains";
+import { useQuery } from "@tanstack/react-query";
+import { TOKEN_ABI, ESCROW_VAULT_ABI } from './abis';
+import { useAccount } from 'wagmi';
+
 const client = createPublicClient({
     chain: sepolia,
     transport: http()
 })
 
 //代币余额查询
-export const TOKEN_ADDRESS = "0x85166220421C86B90a630E496840d6C38aa7455B"; //代币地址
-export const TOKEN_ABI = [
-    {
-        type: 'event',
-        name: 'Approval',
-        inputs: [
-            {
-                indexed: true,
-                name: 'owner',
-                type: 'address',
-            },
-            {
-                indexed: true,
-                name: 'spender',
-                type: 'address',
-            },
-            {
-                indexed: false,
-                name: 'value',
-                type: 'uint256',
-            },
-        ],
-    },
-    {
-        type: 'event',
-        name: 'Transfer',
-        inputs: [
-            {
-                indexed: true,
-                name: 'from',
-                type: 'address',
-            },
-            {
-                indexed: true,
-                name: 'to',
-                type: 'address',
-            },
-            {
-                indexed: false,
-                name: 'value',
-                type: 'uint256',
-            },
-        ],
-    },
-    {
-        type: 'function',
-        name: 'allowance',
-        stateMutability: 'view',
-        inputs: [
-            {
-                name: 'owner',
-                type: 'address',
-            },
-            {
-                name: 'spender',
-                type: 'address',
-            },
-        ],
-        outputs: [
-            {
-                type: 'uint256',
-            },
-        ],
-    },
-    {
-        type: 'function',
-        name: 'approve',
-        stateMutability: 'nonpayable',
-        inputs: [
-            {
-                name: 'spender',
-                type: 'address',
-            },
-            {
-                name: 'amount',
-                type: 'uint256',
-            },
-        ],
-        outputs: [
-            {
-                type: 'bool',
-            },
-        ],
-    },
-    {
-        type: 'function',
-        name: 'balanceOf',
-        stateMutability: 'view',
-        inputs: [
-            {
-                name: 'account',
-                type: 'address',
-            },
-        ],
-        outputs: [
-            {
-                type: 'uint256',
-            },
-        ],
-    },
-    {
-        type: 'function',
-        name: 'decimals',
-        stateMutability: 'view',
-        inputs: [],
-        outputs: [
-            {
-                type: 'uint8',
-            },
-        ],
-    },
-    {
-        type: 'function',
-        name: 'name',
-        stateMutability: 'view',
-        inputs: [],
-        outputs: [
-            {
-                type: 'string',
-            },
-        ],
-    },
-    {
-        type: 'function',
-        name: 'symbol',
-        stateMutability: 'view',
-        inputs: [],
-        outputs: [
-            {
-                type: 'string',
-            },
-        ],
-    },
-    {
-        type: 'function',
-        name: 'totalSupply',
-        stateMutability: 'view',
-        inputs: [],
-        outputs: [
-            {
-                type: 'uint256',
-            },
-        ],
-    },
-    {
-        type: 'function',
-        name: 'transfer',
-        stateMutability: 'nonpayable',
-        inputs: [
-            {
-                name: 'recipient',
-                type: 'address',
-            },
-            {
-                name: 'amount',
-                type: 'uint256',
-            },
-        ],
-        outputs: [
-            {
-                type: 'bool',
-            },
-        ],
-    },
-    {
-        type: 'function',
-        name: 'transferFrom',
-        stateMutability: 'nonpayable',
-        inputs: [
-            {
-                name: 'sender',
-                type: 'address',
-            },
-            {
-                name: 'recipient',
-                type: 'address',
-            },
-            {
-                name: 'amount',
-                type: 'uint256',
-            },
-        ],
-        outputs: [
-            {
-                type: 'bool',
-            },
-        ],
-    },
-] as const
-export async function useTokenBalance(userAddress: string) {
-    try {
-        // 同时获取余额和小数位数
-        const [balance, decimals] = await Promise.all([
-            client.readContract({
-                address: TOKEN_ADDRESS as `0x${string}`,
+const TOKEN_ADDRESS = "0x6fa98CCFC8E55c9Bf88cf0E2Be0E7d9842dA29DB";
+export const useTokenBalance = (userAddress: string) => {
+    return useQuery({
+        queryKey: ['tokenBalance', TOKEN_ADDRESS, userAddress],
+        queryFn: async () => {
+            if (!TOKEN_ADDRESS || !userAddress) {
+                throw new Error('Token address and user address are required');
+            }
+
+            // 使用 viem 创建合约实例
+            const balance = await client.readContract({
+                address: TOKEN_ADDRESS,
                 abi: TOKEN_ABI,
                 functionName: 'balanceOf',
-                args: [userAddress as `0x${string}`]
-            }) as Promise<bigint>, // 明确指定返回值类型为 bigint
-            client.readContract({
-                address: TOKEN_ADDRESS as `0x${string}`,
+                args: [userAddress],
+            }) as bigint; // 添加类型断言
+
+            // 获取代币小数位数
+            const decimals = await client.readContract({
+                address: TOKEN_ADDRESS,
                 abi: TOKEN_ABI,
-                functionName: 'decimals'
-            }) as Promise<number>, // 明确指定返回值类型为 number
-        ]);
+                functionName: 'decimals',
+            }) as number; // 添加类型断言
 
-        // 将原始余额转换为正确的代币金额
-        const formattedBalance = formatUnits(balance, decimals);
+            // 格式化余额为可读数字
+            return Number(balance) / Math.pow(10, decimals);
+        }
+    });
+};
+const EscrowVaultUpgradeable_ADDRESS = "0x4d164Ba20F1390aC0EDDA79FcC0eE7c165394F97";
 
 
-        return {
-            raw: balance,           // 原始余额 (BigInt)
-            formatted: formattedBalance, // 格式化余额 (字符串)
-            decimals: decimals,     // 小数位数
-        };
-    } catch (error) {
-        console.error('获取代币余额失败:', error);
-        return null;
+// 锁定资金
+export const lockFunds = async (userAddress: string, betId: string, amount: bigint, signature: string) => {
+    if (!EscrowVaultUpgradeable_ADDRESS) {
+        throw new Error('EscrowVaultUpgradeable address is required');
     }
+    try {
+        const walletClient = createWalletClient({
+            chain: sepolia,
+            transport: http(),
+            account: userAddress as `0x${string}`, // 将传入的 userAddress 转换为 address 类型
+        });
+        const result = await walletClient.writeContract({
+            address: EscrowVaultUpgradeable_ADDRESS,
+            abi: ESCROW_VAULT_ABI,
+            functionName: 'lockFunds',
+            args: [betId, amount, signature],
+        });
 
-}
-
-
+        return result;
+    } catch (error) {
+        console.error('Error locking funds:', error);
+        throw error;
+    }
+};
