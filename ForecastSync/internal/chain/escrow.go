@@ -17,20 +17,22 @@ import (
 
 const usdcDecimals = 6
 
-// Escrow releaseFunds 最小 ABI
+// Escrow releaseFunds 最小 ABI（与合约 releaseFunds(bytes32,address,uint256,bytes) 一致）
 const escrowReleaseFundsABI = `[
 	{"name":"releaseFunds","type":"function","inputs":[
 		{"name":"betId","type":"bytes32"},
 		{"name":"to","type":"address"},
-		{"name":"amount","type":"uint256"}
+		{"name":"amount","type":"uint256"},
+		{"name":"signature","type":"bytes"}
 	],"outputs":[]}
 ]`
 
-// ReleaseFunds 调用 Escrow.releaseFunds(betId, to, amount)。Executor 私钥对应地址需在 Escrow 上具备 EXECUTOR_ROLE；Gas 由该账户支付。
-// betIdHex 为 contract_order_id 十六进制（可带或不带 0x 前缀，不足 32 字节时左补零）。
-func ReleaseFunds(ctx context.Context, rpcURL, escrowAddr, executorPrivateKeyHex string, betIdHex string, toAddr common.Address, amount *big.Int) (txHash string, err error) {
-	if rpcURL == "" || escrowAddr == "" || executorPrivateKeyHex == "" {
-		return "", fmt.Errorf("rpc_url, escrow_address, executor_private_key 必填")
+// ReleaseFunds 调用 Escrow.releaseFunds(betId, to, amount, signature)。Executor 私钥对应地址需在 Escrow 上具备 EXECUTOR_ROLE；Gas 由该账户支付。
+// 内部会从 BetRouter 读取 Executor 的 nonce，构造 updateBetStatusWithSig(betId, REFUNDED, signature) 所需签名后调用 releaseFunds。
+// betRouterAddr 为 BetRouter 合约地址；betIdHex 为 contract_order_id 十六进制（可带或不带 0x 前缀）。
+func ReleaseFunds(ctx context.Context, rpcURL, escrowAddr, betRouterAddr, executorPrivateKeyHex string, betIdHex string, toAddr common.Address, amount *big.Int) (txHash string, err error) {
+	if rpcURL == "" || escrowAddr == "" || betRouterAddr == "" || executorPrivateKeyHex == "" {
+		return "", fmt.Errorf("rpc_url, escrow_address, bet_router_address, executor_private_key 必填")
 	}
 	if amount == nil || amount.Sign() <= 0 {
 		return "", fmt.Errorf("amount 必须大于 0")
@@ -66,15 +68,6 @@ func ReleaseFunds(ctx context.Context, rpcURL, escrowAddr, executorPrivateKeyHex
 	var betId [32]byte
 	copy(betId[32-len(buf):], buf)
 
-	parsed, err := abi.JSON(strings.NewReader(escrowReleaseFundsABI))
-	if err != nil {
-		return "", err
-	}
-	data, err := parsed.Pack("releaseFunds", betId, toAddr, amount)
-	if err != nil {
-		return "", fmt.Errorf("pack releaseFunds: %w", err)
-	}
-
 	keyHex := executorPrivateKeyHex
 	if len(keyHex) > 0 && keyHex[:2] == "0x" {
 		keyHex = keyHex[2:]
@@ -86,6 +79,24 @@ func ReleaseFunds(ctx context.Context, rpcURL, escrowAddr, executorPrivateKeyHex
 	key, err := crypto.ToECDSA(keyBuf)
 	if err != nil {
 		return "", fmt.Errorf("to ecdsa: %w", err)
+	}
+	executorAddr := crypto.PubkeyToAddress(key.PublicKey).Hex()
+	executorNonce, err := GetNonce(ctx, rpcURL, betRouterAddr, executorAddr)
+	if err != nil {
+		return "", fmt.Errorf("获取 Executor 在 BetRouter 的 nonce: %w", err)
+	}
+	signature, err := SignBetStatusUpdate(betId, BetStatusRefunded, executorNonce, executorPrivateKeyHex)
+	if err != nil {
+		return "", fmt.Errorf("生成 releaseFunds 签名: %w", err)
+	}
+
+	parsed, err := abi.JSON(strings.NewReader(escrowReleaseFundsABI))
+	if err != nil {
+		return "", err
+	}
+	data, err := parsed.Pack("releaseFunds", betId, toAddr, amount, signature)
+	if err != nil {
+		return "", fmt.Errorf("pack releaseFunds: %w", err)
 	}
 
 	chainID, err := client.ChainID(ctx)

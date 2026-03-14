@@ -203,6 +203,7 @@ func main() {
 	orderHandler := api.NewOrderHandler(db, logrusLogger, tradingAdapters, cfg)
 	r.GET("/api/orders", orderHandler.ListOrders)
 	r.POST("/api/orders/prepare", orderHandler.PrepareOrder)
+	r.POST("/api/orders/prepare-lock", orderHandler.PrepareLock)
 	r.POST("/api/orders/place", orderHandler.PlaceOrder)
 	r.GET("/api/orders/:order_uuid", orderHandler.GetOrderDetail)
 	r.GET("/api/orders/:order_uuid/withdraw-info", orderHandler.GetWithdrawInfo)

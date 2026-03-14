@@ -679,8 +679,8 @@ func (s *OrderService) RequestUnfreeze(ctx context.Context, contractOrderID stri
 	if contractOrderID == "" {
 		return "", fmt.Errorf("contract_order_id 必填")
 	}
-	if s.chainCfg == nil || s.chainCfg.ExecutorPrivateKey == "" || s.chainCfg.EscrowAddress == "" || s.chainCfg.RPCURL == "" {
-		return "", fmt.Errorf("解冻未配置链参数（rpc_url、escrow_address、CHAIN_EXECUTOR_PRIVATE_KEY）")
+	if s.chainCfg == nil || s.chainCfg.ExecutorPrivateKey == "" || s.chainCfg.EscrowAddress == "" || s.chainCfg.RPCURL == "" || s.chainCfg.BetRouterAddress == "" {
+		return "", fmt.Errorf("解冻未配置链参数（rpc_url、escrow_address、bet_router_address、CHAIN_EXECUTOR_PRIVATE_KEY）")
 	}
 
 	ce, err := s.contractEvents.GetUnprocessedByContractOrderID(ctx, contractOrderID)
@@ -702,7 +702,7 @@ func (s *OrderService) RequestUnfreeze(ctx context.Context, contractOrderID stri
 		return "", fmt.Errorf("入账金额无效")
 	}
 	toAddr := common.HexToAddress(ce.UserWallet)
-	txHash, err = chain.ReleaseFunds(ctx, s.chainCfg.RPCURL, s.chainCfg.EscrowAddress, s.chainCfg.ExecutorPrivateKey, contractOrderID, toAddr, amountBig)
+	txHash, err = chain.ReleaseFunds(ctx, s.chainCfg.RPCURL, s.chainCfg.EscrowAddress, s.chainCfg.BetRouterAddress, s.chainCfg.ExecutorPrivateKey, contractOrderID, toAddr, amountBig)
 	if err != nil {
 		return "", fmt.Errorf("链上解冻失败: %w", err)
 	}
@@ -711,6 +711,35 @@ func (s *OrderService) RequestUnfreeze(ctx context.Context, contractOrderID stri
 		// 交易已发出，仍返回 txHash，仅记录告警
 	}
 	return txHash, nil
+}
+
+// PrepareLockSignature 为前端入金 lockFunds(betId, amount, signature) 生成 Executor 签名。
+// 合约 updateBetStatusWithSig 在 lockFunds 调用时 tx.origin 为用户，故使用 userWallet 在 BetRouter 的 nonce。
+// betIdHex 为 64 位十六进制（可带 0x 前缀）；返回的 signature 为 0x 开头的 hex，前端直接传给 Escrow.lockFunds。
+func (s *OrderService) PrepareLockSignature(ctx context.Context, betIdHex, userWallet string) (signatureHex string, err error) {
+	if s.chainCfg == nil || s.chainCfg.RPCURL == "" || s.chainCfg.BetRouterAddress == "" || s.chainCfg.ExecutorPrivateKey == "" {
+		return "", fmt.Errorf("入金签名未配置链参数（rpc_url、bet_router_address、CHAIN_EXECUTOR_PRIVATE_KEY）")
+	}
+	hexStr := strings.TrimPrefix(strings.TrimSpace(betIdHex), "0x")
+	if len(hexStr) != 64 {
+		return "", fmt.Errorf("bet_id 须为 64 位十六进制，当前 %d 位", len(hexStr))
+	}
+	buf, err := hex.DecodeString(hexStr)
+	if err != nil {
+		return "", fmt.Errorf("bet_id 非合法十六进制: %w", err)
+	}
+	var betId [32]byte
+	copy(betId[32-len(buf):], buf)
+
+	userNonce, err := chain.GetNonce(ctx, s.chainCfg.RPCURL, s.chainCfg.BetRouterAddress, userWallet)
+	if err != nil {
+		return "", fmt.Errorf("获取用户 BetRouter nonce: %w", err)
+	}
+	sig, err := chain.SignBetStatusUpdate(betId, chain.BetStatusFundsLocked, userNonce, s.chainCfg.ExecutorPrivateKey)
+	if err != nil {
+		return "", fmt.Errorf("生成 lockFunds 签名: %w", err)
+	}
+	return "0x" + hex.EncodeToString(sig), nil
 }
 
 // ContractOrderStatus 返回合约订单状态：unprocessed（可下单/可解冻）、placed（已下单）、refunded（已解冻）、not_found（无入账记录）

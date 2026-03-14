@@ -168,6 +168,32 @@ func (h *OrderHandler) PlaceOrder(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
+// PrepareLockRequest 入金前获取 lockFunds 所需 Executor 签名
+type PrepareLockRequest struct {
+	BetID      string `json:"bet_id"`      // 必填，64 位十六进制（可带 0x）
+	UserWallet string `json:"user_wallet"` // 必填，用户钱包地址
+}
+
+// PrepareLock 入金签名 POST /api/orders/prepare-lock：返回 Executor 签名，供前端调用 Escrow.lockFunds(betId, amount, signature)
+func (h *OrderHandler) PrepareLock(c *gin.Context) {
+	var req PrepareLockRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request: " + err.Error()})
+		return
+	}
+	if req.BetID == "" || req.UserWallet == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "bet_id 与 user_wallet 必填"})
+		return
+	}
+	signatureHex, err := h.orderService.PrepareLockSignature(c.Request.Context(), req.BetID, req.UserWallet)
+	if err != nil {
+		h.logger.WithError(err).Error("PrepareLockSignature failed")
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"signature": signatureHex})
+}
+
 // UnfreezeRequest 解冻请求 body
 type UnfreezeRequest struct {
 	ContractOrderID string `json:"contract_order_id"` // 必填

@@ -146,3 +146,40 @@ func SubmitExecuteBetIntent(ctx context.Context, rpcURL, betRouterAddr, executor
 	// 与 chain_subscribe 一致：contract_order_id 存为 hex 无 0x
 	return hex.EncodeToString(betId.Bytes()), nil
 }
+
+// BetStatus 与合约 IBetRouter.BetStatus 枚举一致
+const (
+	BetStatusNone           = 0
+	BetStatusIntentConsumed = 1
+	BetStatusFundsLocked    = 2
+	BetStatusExecuted       = 3
+	BetStatusSettled        = 4
+	BetStatusRefunded       = 5
+)
+
+// SignBetStatusUpdate 生成 BetRouter.updateBetStatusWithSig 所需的签名：digest = keccak256(abi.encodePacked(betId, status, nonce))，用 signerKey 签名。
+// 用于 Escrow.releaseFunds（status=REFUNDED，nonce 为 Executor 的 BetRouter nonce）或 prepare-lock（status=FUNDS_LOCKED，nonce 为用户的 BetRouter nonce）。
+func SignBetStatusUpdate(betId [32]byte, status uint8, nonce uint64, signerPrivateKeyHex string) ([]byte, error) {
+	keyHex := strings.TrimPrefix(strings.TrimSpace(signerPrivateKeyHex), "0x")
+	keyBuf, err := hex.DecodeString(keyHex)
+	if err != nil {
+		return nil, fmt.Errorf("decode signer key: %w", err)
+	}
+	key, err := crypto.ToECDSA(keyBuf)
+	if err != nil {
+		return nil, fmt.Errorf("to ecdsa: %w", err)
+	}
+	// digest = keccak256(abi.encodePacked(betId, status, nonce))，与合约一致；Solidity encodePacked(bytes32,uint8,uint256) = 32+1+32 字节
+	nonceBig := new(big.Int).SetUint64(nonce)
+	digest := crypto.Keccak256Hash(
+		append(
+			append(betId[:], byte(status)),
+			common.LeftPadBytes(nonceBig.Bytes(), 32)...,
+		),
+	)
+	sig, err := crypto.Sign(digest.Bytes(), key)
+	if err != nil {
+		return nil, fmt.Errorf("sign: %w", err)
+	}
+	return sig, nil
+}

@@ -181,7 +181,51 @@ GET http://localhost:8081/api/markets/evt-xxx
 
 ## 订单
 
-**合约订单流程简述**：用户入金（链上 lockFunds）→ 后端监听到入金成功后落库 → 用户调用「下单准备」获取待签名信息 → 用户签名后调用「下单」。若入金成功但用户未完成下单或下单失败，资金会停留在 Escrow 合约中；用户可调用「申请解冻」由服务端触发链上退款，解冻后该合约订单不可再用于下单（prepare/place 会拒绝并提示已解冻）。
+**合约订单流程简述**：用户入金（链上 lockFunds，需先调本接口获取 Executor 签名）→ 后端监听到入金成功后落库 → 用户调用「下单准备」获取待签名信息 → 用户签名后调用「下单」。若入金成功但用户未完成下单或下单失败，资金会停留在 Escrow 合约中；用户可调用「申请解冻」由服务端触发链上退款，解冻后该合约订单不可再用于下单（prepare/place 会拒绝并提示已解冻）。
+
+### 2.1 入金前获取 lockFunds 签名
+
+合约 Escrow.lockFunds(betId, amount, signature) 需要 Executor 对 BetRouter 状态更新的签名。前端在调用链上 lockFunds 前，先请求本接口获取 `signature`，再传入合约。
+
+- **接口 path:** `POST /api/orders/prepare-lock`
+- **接口协议:** HTTP POST
+
+#### 接口请求参数
+
+| 请求参数   | 请求类型 | 是否必填 | 备注 |
+| ---------- | -------- | -------- | ---- |
+| bet_id     | string   | 是       | 64 位十六进制（可带 0x 前缀），与链上 lockFunds 的 betId 一致 |
+| user_wallet| string   | 是       | 用户钱包地址（0x...） |
+
+#### 接口响应参数
+
+| 参数名     | 字段类型 | 是否可空 | 备注 |
+| ---------- | -------- | -------- | ---- |
+| signature  | string   | 否       | 0x 开头的 hex，直接传给 Escrow.lockFunds 的第三参数 |
+
+#### 请求样例
+
+```json
+POST http://localhost:8081/api/orders/prepare-lock
+Content-Type: application/json
+
+{
+  "bet_id": "0x798e3704c340206c65f27a15df098b10ab71dc36e93acd5602643673...",
+  "user_wallet": "0x..."
+}
+```
+
+#### 响应样例
+
+```json
+{
+  "signature": "0x..."
+}
+```
+
+**Error:** 400 — 缺少参数、链配置未填（rpc_url、bet_router_address、CHAIN_EXECUTOR_PRIVATE_KEY）等，body 为 `{"error": "..."}`。
+
+---
 
 ### 3. 下单准备（获取待签名信息）
 
@@ -293,7 +337,7 @@ Content-Type: application/json
 
 ### 5. 申请解冻（合约订单）
 
-入金成功但未完成「签名并下单」或下单失败时，用户可申请解冻该合约订单对应的资金。后端校验存在未处理且未解冻的入账记录后，由服务端调用 Escrow.releaseFunds 将资金退回到用户钱包，并标记该合约订单为已解冻；已解冻的合约订单不可再用于 prepare/place。
+入金成功但未完成「签名并下单」或下单失败时，用户可申请解冻该合约订单对应的资金。后端校验存在未处理且未解冻的入账记录后，由服务端调用 Escrow.releaseFunds(betId, to, amount, signature) 将资金退回到用户钱包，并标记该合约订单为已解冻；已解冻的合约订单不可再用于 prepare/place。配置需包含 `bet_router_address` 与 `CHAIN_EXECUTOR_PRIVATE_KEY`。
 
 - **接口 path:** `POST /api/orders/unfreeze`
 - **接口协议:** HTTP POST
